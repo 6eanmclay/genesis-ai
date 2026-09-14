@@ -57,3 +57,50 @@ That doesn't make it wrong — it makes it a real design problem in its own righ
 - **Genuine conflicts between sources** — one reference minimal, another maximalist, with no real common ground for a given aspect. Undecided whether synthesis should pick one, blend cautiously, or surface the tension back to the owner rather than silently resolving it.
 - **How the explanation and the adaptation relate conversationally** — does the owner see the explanation and get to react/redirect before adaptation runs, or are both produced in one pass? Bounded-questioning precedent (`experienceFlow.ts`) suggests the former is more consistent with how this product already works, but isn't decided here.
 - **Same legal/ToS posture as Learning Sources** — inherits those constraints via the shared fetch layer, not a separate policy, but worth confirming explicitly once both capabilities are real and this document isn't the only place that assumption lives.
+
+---
+
+## v4, 2026-09-14 — Contextual Link Understanding + Explicit Reference Design Intent
+
+**Status: backlog, design only, not implemented.** Sean's framing, captured verbatim in shape: this capability decides **when and why** Reference Design Mode is invoked. It does not replace it. Reference Design Mode (see `project_reference_design_mode` — slice 1 built on frozen 741ebbb, approval/execution deliberately unwired) stays exactly as it is; what is missing is the judgement in front of it.
+
+### A URL alone must never imply "copy this"
+
+Four distinct intents an owner can carry when they put a link in front of J4, and today nothing distinguishes them:
+
+| | The owner says | What J4 should do |
+|---|---|---|
+| **A** | "What do you think of this?" | Analyse the site, offer observations. **Change nothing.** |
+| **B** | "Find some ideas from this." | Extract principles worth reusing. **Change nothing.** |
+| **C** | "Make my website layout look like this." | The only intent that activates the reference-design workflow. |
+| **D** | "Find me some great commerce website designs for my business." | Research several strong examples and reason about their patterns. |
+
+The rule underneath: **only an explicit stated intent to reproduce or adapt a site's layout activates C.** A pasted URL is not that intent. A/B analyse and report without touching the owner's storefront — which is the same discipline the multi-source analysis above already has, applied one step earlier, at intent rather than at synthesis.
+
+**D is not "pick one and copy it."** It is research across examples, reasoned about as patterns. Its output is the same shape the rest of this document already calls for: reusable **design principles, patterns and recommendations** J4 can apply to *this* business — never a single site selected and reproduced. This is the same "learn design language, not copy websites" rule in the document's title, extended to the case where the owner supplies no reference at all.
+
+### J4's design suggestions must be visually demonstrable
+
+A proposal an owner cannot see is a proposal they cannot judge. When J4 proposes a visual or layout change it should be able to **generate a contextual mockup** and say, plainly:
+
+> "Here's what I mean."
+
+and show the owner the proposed result **before** asking whether to apply it.
+
+Ideas it should be able to demonstrate: product-photo collages · hero compositions · product grids · image placement beneath icons/categories · editorial layouts · promotional sections · alternate navigation arrangements · typography and visual hierarchy · merchandising compositions.
+
+**Grounded in the owner's real business, not placeholders.** The mockup should be built from their actual storefront, products, imagery, brand identity and available content whenever those assets exist. Generic placeholder products when real assets are available would make the demonstration answer a different question than the one asked — and this codebase already has the standing rule (`project_studio_creation_station`): never fake an asset to make an offer render.
+
+**The visual is a proposal, never an automatic change.** This is the same boundary Reference Design Mode already draws by leaving approval/execution unwired, and it holds here for J4-originated ideas too.
+
+### It has to work for both origins
+
+- **Explicit reference** — "make my site look more like this" (intent C above).
+- **J4-originated** — "I think this would look better."
+
+The second must come from J4's understanding of the business plus established design patterns. It must not be a reference site copied without being asked for — which is the failure mode the intent table above exists to prevent, arriving by a different door.
+
+### What this adds to the open questions
+
+- Where intent classification lives: a bounded question to the owner when a link arrives with ambiguous framing, versus inferring from the sentence around the URL. The bounded-questioning precedent (`experienceFlow.ts`) argues for asking rather than guessing, and guessing wrong here means editing somebody's storefront they only wanted an opinion on.
+- Whether a mockup is rendered from the real storefront (the live route, themed) or composed as an image. The storefront already renders from `Theme` + real products, and `resolvePreviewTheme` already previews an unapproved proposal against it for owner/employee only — which is a real, existing mechanism this should be measured against before inventing an image compositor.
