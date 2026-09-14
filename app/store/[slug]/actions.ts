@@ -388,18 +388,58 @@ export async function previewCheckoutPrice(
     });
     if (!product) throw new RecoverableError("Product not found");
 
-    // Shipping arrives as the id of a rate the customer selected, and its
-    // amount is looked up rather than accepted — the same rule as everything
-    // else here. An unrecognised id simply prices without shipping, because a
-    // preview that guessed a delivery cost would be worse than one that waits.
+    // ============ THE AMOUNT IS LOOKED UP, NOW (2026-09-14) ==========
+    //
+    // This comment used to say the amount was looked up. It was not: the id
+    // was read as a presence flag and the COST came straight off the form —
+    //
+    //     const shippingInCents = Number(formData.get("shippingInCents") ?? 0);
+    //
+    // — so a caller who changed one number saw a total this preview would
+    // never charge. The client said the same untrue thing about itself ("The
+    // AMOUNT is still never submitted") while submitting it.
+    //
+    // confirmSelectedRate is the boundary the charge already goes through, and
+    // it says what this is for in its own words: "The browser tells us WHICH
+    // option was chosen. It never tells us what that option costs. This
+    // re-asks the carrier and matches by id." The preview now crosses the same
+    // boundary, so the figure shown is a figure the carrier just quoted.
+    //
+    // THE SAME DESTINATION THE CHARGE WILL USE. The address travels with the
+    // request exactly as it does on the checkout form beside it — quoting a
+    // different destination than the one about to be charged would be this
+    // same defect wearing a different hat.
     const rateId = String(formData.get("rateId") ?? "").trim();
-    const shippingInCents = Number(formData.get("shippingInCents") ?? 0);
+    let shippingInCents = 0;
+    if (rateId) {
+      const destination = readAddress(formData);
+      if (!destination) {
+        throw new RecoverableError("We need the delivery address before we can price shipping.");
+      }
+      const confirmed = await confirmSelectedRate({
+        storeId: store.id,
+        productId: product.id,
+        destination,
+        rateId,
+      });
+      // REFUSED, NOT QUIETLY ZEROED. Pricing without the shipping the customer
+      // just chose would show a total lower than the one they will be asked
+      // for, which is worse than saying the rate has moved.
+      if (!confirmed.ok) {
+        throw new RecoverableError(
+          confirmed.reason === "rate_expired"
+            ? "That shipping rate has expired — choose a service again."
+            : "We couldn't price that shipping option just now.",
+        );
+      }
+      shippingInCents = confirmed.selected.amountInCents;
+    }
 
     const { pricing, code } = await priceCheckout({
       storeId: store.id,
       productId: product.id,
       unitPriceInCents: product.priceInCents,
-      shippingInCents: rateId && Number.isFinite(shippingInCents) ? Math.max(0, shippingInCents) : 0,
+      shippingInCents,
       code: String(formData.get("discountCode") ?? "").trim() || null,
     });
 

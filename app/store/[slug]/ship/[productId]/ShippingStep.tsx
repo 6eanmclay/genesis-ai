@@ -63,21 +63,40 @@ export function ShippingStep({
     { ok: true, pricing: priceOrder({ unitPriceInCents: priceInCents }), code: null }
   );
   const [code, setCode] = useState("");
-  // Which service is selected, so the breakdown can move with it. The AMOUNT is
-  // still never submitted — this drives a re-price whose numbers come from the
-  // server, and the checkout form below sends only the rate id.
+  // Which service is selected, so the breakdown can move with it. The amount
+  // is not submitted — see reprice below, which sends the id and the
+  // destination and lets the server ask the carrier.
   const [selectedRateId, setSelectedRateId] = useState<string | null>(null);
 
   const appliedCode = preview.ok && preview.code?.applied ? preview.code.candidate.code : null;
   const codeError = preview.ok && preview.code && !preview.code.applied ? preview.code.message : null;
 
-  const reprice = (nextCode: string, rateId: string | null, shippingInCents: number) => {
+  // ============ THE AMOUNT REALLY IS NEVER SUBMITTED NOW (2026-09-14) ====
+  //
+  // It used to be. This sent `shippingInCents` beside the rate id and the
+  // server priced with it, while both this file and the server said the amount
+  // was looked up. The id and the DESTINATION go now — the same two things the
+  // checkout form below sends — and the server crosses confirmSelectedRate,
+  // which re-asks the carrier and matches by id.
+  const reprice = (nextCode: string, rateId: string | null) => {
     setCode(nextCode);
     const data = new FormData();
     data.set("discountCode", nextCode);
     if (rateId) {
       data.set("rateId", rateId);
-      data.set("shippingInCents", String(shippingInCents));
+      // THE ADDRESS THE CHARGE WILL USE — quote.address, exactly as the
+      // checkout form's own hidden fields do, so the preview and the charge
+      // cannot be quoting two different destinations.
+      const destination = quote.address;
+      if (destination) {
+        data.set("name", destination.name ?? "");
+        data.set("line1", destination.line1);
+        data.set("line2", destination.line2 ?? "");
+        data.set("city", destination.city);
+        data.set("state", destination.state ?? "");
+        data.set("postalCode", destination.postalCode);
+        data.set("country", destination.country);
+      }
     }
     previewAction(data);
   };
@@ -256,7 +275,7 @@ export function ShippingStep({
                     required
                     onChange={() => {
                       setSelectedRateId(option.rateId);
-                      reprice(appliedCode ?? code, option.rateId, option.amountInCents);
+                      reprice(appliedCode ?? code, option.rateId);
                     }}
                   />
                   <span className="flex-1">
@@ -284,11 +303,11 @@ export function ShippingStep({
               pending={previewPending}
               onApply={(value) => {
                 const chosen = quote.options?.find((o) => o.rateId === selectedRateId) ?? quote.options?.[0];
-                reprice(value, chosen?.rateId ?? null, chosen?.amountInCents ?? 0);
+                reprice(value, chosen?.rateId ?? null);
               }}
               onRemove={() => {
                 const chosen = quote.options?.find((o) => o.rateId === selectedRateId) ?? quote.options?.[0];
-                reprice("", chosen?.rateId ?? null, chosen?.amountInCents ?? 0);
+                reprice("", chosen?.rateId ?? null);
               }}
             />
           </div>
