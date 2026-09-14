@@ -1,6 +1,6 @@
 import type { BoundaryId } from "./boundaries";
 import { COMMERCE_OBSERVATION_NEEDS } from "@/lib/commerce/observationNeeds";
-import { COMMERCE_CONDITION_PREFIX } from "@/lib/commerce/conditions";
+import { COMMERCE_CONDITION_PREFIX } from "@/lib/commerce/conditionKeys";
 
 // WHAT AN OBSERVATION NEEDS, ASKED GENERICALLY.
 //

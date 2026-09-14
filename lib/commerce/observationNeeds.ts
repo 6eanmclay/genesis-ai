@@ -1,5 +1,5 @@
 import type { ObservationNeed } from "@/lib/j4/observationNeeds";
-import type { CommerceConditionKey } from "./conditions";
+import type { CommerceConditionKey } from "./conditionKeys";
 
 // WHAT EACH COMMERCE CONDITION ACTUALLY NEEDS FROM THE OWNER.
 //

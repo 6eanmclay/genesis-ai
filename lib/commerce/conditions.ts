@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { COMMERCE_CONDITION_PREFIX, type CommerceConditionKey } from "./conditionKeys";
 import { upsertObservation, resolveMissingObservations, type ObservationState } from "@/lib/dashboard/genesisObservations";
 import { isBrokenConnection } from "@/lib/integrations/paymentBadge";
 import { isEmailConfigured } from "@/lib/email/sendEmail";
@@ -47,14 +48,13 @@ import { isEmailConfigured } from "@/lib/email/sendEmail";
  * involved, and it updates in place as the count changes.
  */
 
-/** The namespace these conditions own, so a sweep only resolves its own rows. */
-export const COMMERCE_CONDITION_PREFIX = "commerce:";
-
-export type CommerceConditionKey =
-  | "orders_unfulfilled_stale"
-  | "orders_shipped_untracked"
-  | "receipts_unsent"
-  | "payment_connection_broken";
+// THE NAMES LIVE IN ./conditionKeys, which imports nothing (2026-09-14).
+//
+// Re-exported here so every existing importer is unchanged. They moved because
+// this file imports prisma, and lib/j4/observationNeeds.ts needs the namespace
+// string from a module the CLIENT bundle reaches — see ./conditionKeys for the
+// blank page that taught us.
+export { COMMERCE_CONDITION_PREFIX, type CommerceConditionKey } from "./conditionKeys";
 
 export interface CommerceCondition {
   key: CommerceConditionKey;
