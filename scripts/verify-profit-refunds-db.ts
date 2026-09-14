@@ -1,7 +1,8 @@
 import "@/scripts/lib/allowServerOnly";
 import { requireTestDatabase } from "@/scripts/lib/requireTestDatabase";
 import { prismaSystem } from "@/lib/prisma";
-import { getProfitSummary, getOrderSummary } from "@/lib/dashboard/whatHappened";
+import { getProfitSummary, getOrderSummary, getRevenueTrend } from "@/lib/dashboard/whatHappened";
+import { ORDER_STATUSES, countsAsRevenue, REVENUE_ORDER_FILTER } from "@/lib/orders/orderStatus";
 
 // A REFUNDED ORDER IS NOT PROFIT:
 //
@@ -71,7 +72,7 @@ async function makeStore(stamp: number, opts: { cost?: number | null } = {}) {
 async function order(
   storeId: string,
   productId: string | null,
-  status: "paid" | "refunded",
+  status: string,
   ref: string,
 ) {
   await prismaSystem.order.create({
@@ -160,6 +161,51 @@ async function main(): Promise<void> {
     eq("the paid order with no cost is untracked", profit.ordersWithUnknownCost, 1);
     eq("  the refunded one is absent entirely", profit.ordersWithKnownCost, 0);
     eq("  and no profit is claimed", profit.profitInCents, 0);
+  }
+
+  // ====================================================================
+  console.log("\n5. Disputed and charged-back money is not income either\n");
+  // ====================================================================
+  //
+  // countsAsRevenue has excluded these since 2026-08-30 — "a disputed order's
+  // money has been withdrawn. Counting it while it is out of the account would
+  // report income the business does not have." The dashboard's own money reads
+  // spelled a narrower rule, `{ status: { not: "refunded" } }`, so J4 and the
+  // dashboard disagreed about revenue for exactly these two states.
+  for (const status of ["disputed", "charged_back"] as const) {
+    const { store, product } = await makeStore(stamp);
+    await order(store.id, product.id, "paid", `p-${status}-${stamp}`);
+    await order(store.id, product.id, status, `x-${status}-${stamp}`);
+
+    const profit = await getProfitSummary(store.id);
+    const summary = await getOrderSummary(store.id, { includeRevenue: true });
+    const trend = await getRevenueTrend(store.id, 30);
+
+    eq(`${status}: revenue counts only the paid sale`, summary.allTimeRevenueInCents, 5000);
+    eq(`  ${status}: profit counts only the paid sale`, profit.profitInCents, 3000);
+    eq(`  ${status}: and only that one is tracked`, profit.ordersWithKnownCost, 1);
+    // THE SPARKLINE HAD NO STATUS FILTER AT ALL, so it drew every reversal as
+    // income on the surface an owner sees first.
+    eq(`  ${status}: the revenue trend totals only the paid sale`,
+      trend.reduce((a, b) => a + b, 0), 5000);
+    // A COUNT IS NOT MONEY. A disputed order genuinely happened.
+    eq(`  ${status}: the order count still includes it`, summary.allTimeOrderCount, 2);
+  }
+
+  // ====================================================================
+  console.log("\n6. The query filter and the predicate cannot drift\n");
+  // ====================================================================
+  {
+    // countsAsRevenue cannot run inside a Prisma where clause, so the rule has
+    // two shapes. Asserted across the whole vocabulary rather than the two
+    // statuses that happened to be interesting today: a fifth status added to
+    // one shape and forgotten in the other is exactly how this gap opened.
+    assert("the vocabulary is the one this rule must cover",
+      ORDER_STATUSES.length >= 4, JSON.stringify(ORDER_STATUSES));
+    for (const status of ORDER_STATUSES) {
+      eq(`  ${status}: filter and predicate agree`,
+        status === REVENUE_ORDER_FILTER.status, countsAsRevenue(status));
+    }
   }
 
   console.log(`\n${failures} failed, ${passes} passed`);

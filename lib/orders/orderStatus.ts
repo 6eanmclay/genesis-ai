@@ -122,6 +122,26 @@ export function countsAsRevenue(status: string): boolean {
 }
 
 /**
+ * The same rule, as a Prisma filter.
+ *
+ * ============ ONE ANSWER, TWO SHAPES (2026-09-14) ====================
+ *
+ * countsAsRevenue cannot run inside a query, so the dashboard's money
+ * aggregates had been spelling their own approximation of it —
+ * `{ status: { not: "refunded" } }`, which counts a DISPUTED order (funds
+ * already withdrawn by the bank) and a CHARGED_BACK one (gone for good) as
+ * income the business does not have. The canonical layer has used
+ * countsAsRevenue since 2026-08-30 and excluded both, so J4 and the dashboard
+ * disagreed about revenue.
+ *
+ * Exported from beside the predicate so there is one rule with two shapes
+ * rather than two rules. verify-profit-refunds-db asserts they agree for every
+ * member of ORDER_STATUSES, so a new status cannot be added to one and
+ * forgotten in the other.
+ */
+export const REVENUE_ORDER_FILTER = { status: ORDER_STATUS.PAID } as const;
+
+/**
  * Has the money been reversed, whether temporarily or for good?
  *
  * What reporting should treat as a reversal rather than a sale. Wider than

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
+import { REVENUE_ORDER_FILTER } from "@/lib/orders/orderStatus";
 import type { ActivityItem, OrderSummary, RecentOrder } from "./types";
 
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -30,7 +31,12 @@ export async function getOrderSummary(
     // happened, and hiding it would make a busy refund-heavy month look quiet.
     // Only the money is corrected — which is why these are separate queries
     // rather than one filtered aggregate.
-    const earned = { status: { not: "refunded" } };
+    // WIDENED TO THE CANONICAL RULE (2026-09-14). This was
+    // `{ status: { not: "refunded" } }`, which counted a DISPUTED order — funds
+    // already withdrawn by the bank — and a CHARGED_BACK one as revenue. The
+    // canonical layer has used countsAsRevenue since 2026-08-30 for exactly
+    // that reason, so J4 excluded both while this dashboard did not.
+    const earned = REVENUE_ORDER_FILTER;
     const [windowed, windowedRevenue, allTime, allTimeRevenue] = await Promise.all([
       prisma.order.aggregate({ where: { storeId, createdAt: { gte: since } }, _count: true }),
       prisma.order.aggregate({
@@ -72,8 +78,11 @@ export async function getOrderSummary(
 // this at all (see layout.tsx).
 export async function getRevenueTrend(storeId: string, days: number = 30): Promise<number[]> {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  // NO STATUS FILTER AT ALL until 2026-09-14, so the Business Pulse sparkline
+  // drew refunded, disputed and charged-back money as income — the widest of
+  // the three money reads in this file, on the surface an owner sees first.
   const orders = await prisma.order.findMany({
-    where: { storeId, createdAt: { gte: since } },
+    where: { storeId, createdAt: { gte: since }, ...REVENUE_ORDER_FILTER },
     select: { createdAt: true, amountInCents: true },
   });
 
@@ -137,7 +146,7 @@ export async function getProfitSummary(storeId: string): Promise<{
   // query, so their logic is unchanged and net = M5 profit − postage still
   // holds; both now rest on a correct figure instead of a known-wrong one.
   const orders = await prisma.order.findMany({
-    where: { storeId, status: { not: "refunded" } },
+    where: { storeId, ...REVENUE_ORDER_FILTER },
     select: { amountInCents: true, product: { select: { costInCents: true } } },
   });
 
