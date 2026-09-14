@@ -220,15 +220,21 @@ export default async function StorefrontPage({
   const priceOf = (product: { id: string; priceInCents: number }): DisplayPrice =>
     salePrices.get(product.id) ?? { listInCents: product.priceInCents, saleInCents: null, percentOff: null, label: null };
 
-  // What the header and the floating pill show. Read from the cookie; no
-  // database row is involved.
+  // What the header and the floating pill show.
+  //
+  // BOTH NUMBERS COME FROM resolveBag (2026-09-14). The amount always did, so
+  // the pill could never quote a total checkout disagreed with — but the count
+  // was read straight off the cookie, and the cookie is a list of what the
+  // customer asked for, not of what this store still sells. A product
+  // deactivated while it sat in somebody's bag rendered "Bag · 2 items ·
+  // $50.00": two items, and one item's money.
+  //
+  // bagCount is still the gate, and only the gate: an empty cookie needs no
+  // query at all, which is the common case on a storefront.
   const bag = await readBag(slug);
-  const bagItemCount = bagCount(bag);
-  // The AMOUNT comes from the same resolveBag the bag page and the charge use,
-  // so the pill can never quote a total checkout disagrees with. Resolved only
-  // when there is something in the bag — an empty bag costs no queries.
-  const bagTotalInCents =
-    bagItemCount > 0 ? (await resolveBag({ storeId: store.id, bag })).pricing.merchandiseSubtotalInCents : 0;
+  const resolvedBag = bagCount(bag) > 0 ? await resolveBag({ storeId: store.id, bag }) : null;
+  const bagItemCount = resolvedBag?.itemCount ?? 0;
+  const bagTotalInCents = resolvedBag?.pricing.merchandiseSubtotalInCents ?? 0;
 
   // Captured as plain locals — TypeScript doesn't carry the `!store` null
   // narrowing above into nested function declarations like renderHero().

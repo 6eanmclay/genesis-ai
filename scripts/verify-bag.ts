@@ -75,7 +75,10 @@ async function main() {
   bag = addToBag(bag, "ring");
   bag = addToBag(bag, "mug", 2);
   eq("two products, one of them twice", bag.items, [{ p: "ring", q: 1 }, { p: "mug", q: 2 }]);
-  eq("the header counts units, not lines", bagCount(bag), 3);
+  // A COOKIE counts units, not lines. It is no longer what any header shows
+  // — see section 4 — but it is still the gate that decides whether a bag is
+  // worth resolving at all, so the arithmetic still has to be right.
+  eq("the cookie counts units, not lines", bagCount(bag), 3);
 
   // ADDING THE SAME THING AGAIN IS NOT A SECOND LINE.
   bag = addToBag(bag, "ring", 2);
@@ -179,6 +182,7 @@ async function main() {
   eq("both lines resolve", resolved.lines.map((l) => l.name), ["Tensor Ring", "Copper Mug"]);
   eq("with real prices from the products", resolved.lines.map((l) => l.unitPriceInCents), [3500, 2500]);
   eq("the subtotal is theirs", resolved.pricing.listSubtotalInCents, 3500 * 2 + 2500);
+  eq("and the count is the units in it", resolved.itemCount, 3);
   eq("nothing discounted yet", resolved.pricing.discountInCents, 0);
 
   // A COOKIE FROM ANOTHER STORE RESOLVES TO NOTHING. This is why it needs no
@@ -195,17 +199,28 @@ async function main() {
   eq("another store's product is not in this bag", foreign.lines, []);
   eq("it is reported as dropped", foreign.droppedProductIds, [theirs.id]);
   eq("and it buys nothing", foreign.pricing.totalInCents, 0);
+  eq("  nor is it counted", foreign.itemCount, 0);
 
   // A PRODUCT THAT WENT AWAY WHILE IT SAT IN A BAG.
   await prisma.product.update({ where: { id: mug.id, storeId: store.id }, data: { active: false } });
   const withGone = await resolveBag({ storeId: store.id, bag: twoThings, now: NOW });
   eq("a deactivated product leaves the bag", withGone.lines.map((l) => l.name), ["Tensor Ring"]);
   eq("and is named so the page can say so", withGone.droppedProductIds, [mug.id]);
+  // ============ THE COUNT LEAVES WITH IT (2026-09-14) ===================
+  //
+  // Every count a customer is shown comes from here now. It used to come
+  // from bagCount(cookie), asserted unchanged on the next line — which is
+  // exactly the number the storefront pill, both header badges and the bag
+  // summary were rendering while this bag held one product.
+  eq("the count leaves with the product", withGone.itemCount, 2);
+  eq("  while the cookie still says three, as it always will", bagCount(twoThings), 3);
   eq("CONTROL: the rest of the bag still prices", withGone.pricing.totalInCents, 7000);
   await prisma.product.update({ where: { id: mug.id, storeId: store.id }, data: { active: true } });
 
+  const emptyResolved = await resolveBag({ storeId: store.id, bag: EMPTY_BAG, now: NOW });
   eq("an empty bag prices to zero without touching anything",
-    (await resolveBag({ storeId: store.id, bag: EMPTY_BAG, now: NOW })).pricing.totalInCents, 0);
+    emptyResolved.pricing.totalInCents, 0);
+  eq("  and counts zero", emptyResolved.itemCount, 0);
 
   // ========================================================================
   console.log("\n=== 5. Sales reach the bag, per line ===\n");
@@ -667,9 +682,20 @@ async function main() {
   // browser — which is how a floating cart usually ends up disagreeing with
   // checkout.
   assert("with an amount resolved by the same function the charge uses",
-    /resolveBag\(\{ storeId: store\.id, bag \}\)\)\.pricing\.merchandiseSubtotalInCents/.test(storefront));
-  assert("and only when there is something in it",
-    /bagItemCount > 0 \?/.test(storefront),
+    /resolvedBag\?\.pricing\.merchandiseSubtotalInCents/.test(storefront));
+  // ============ AND SO DOES THE COUNT (2026-09-14) ======================
+  //
+  // This was the half that did not. The amount came from resolveBag and the
+  // count came from bagCount(cookie), so the pill read "2 items · $50.00" the
+  // moment one of two products was deactivated — see
+  // verify-bag-count-browser.ts, where it is rendered.
+  assert("and a count resolved by that same function, not by the cookie",
+    /const bagItemCount = resolvedBag\?\.itemCount/.test(storefront));
+  assert("  the cookie is nowhere near the number on screen",
+    !/const bagItemCount = bagCount\(/.test(storefront),
+    "the cookie is what the customer asked for; resolveBag is what this store still sells");
+  assert("and the bag is only resolved when there is something in it",
+    /bagCount\(bag\) > 0 \? await resolveBag/.test(storefront),
     "an empty bag must cost no queries on the most-rendered page in Genesis");
 
   const addButton = codeOnly(

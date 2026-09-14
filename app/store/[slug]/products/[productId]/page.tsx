@@ -93,10 +93,12 @@ export default async function ProductDetailPage({
   // The same sale arithmetic the card and the charge use. A customer who saw a
   // discount on the grid must see the same one here.
   const price = await salePriceFor({ storeId: store.id, product });
+  // Count and amount both from resolveBag — see the storefront's own note. The
+  // cookie only decides whether the query is worth making.
   const bag = await readBag(slug);
-  const bagItemCount = bagCount(bag);
-  const bagTotalInCents =
-    bagItemCount > 0 ? (await resolveBag({ storeId: store.id, bag })).pricing.merchandiseSubtotalInCents : 0;
+  const resolvedBag = bagCount(bag) > 0 ? await resolveBag({ storeId: store.id, bag }) : null;
+  const bagItemCount = resolvedBag?.itemCount ?? 0;
+  const bagTotalInCents = resolvedBag?.pricing.merchandiseSubtotalInCents ?? 0;
 
   const theme = (store.theme as Theme | null) ?? DEFAULT_THEME;
   const brandIdentity = (store.blueprint as Blueprint | null)?.brandIdentity;

@@ -44,6 +44,18 @@ export type BagCodeOutcome =
 export interface ResolvedBag {
   /** Products still on sale in this store, in the customer's chosen order. */
   lines: ResolvedBagLine[];
+  /**
+   * How many items the customer actually has, summed over the surviving lines.
+   *
+   * NOT bagCount(cookie), which is a different number the moment anything is
+   * dropped. Every count a customer is shown comes from here for the same
+   * reason every price does: the cookie holds what they asked for, and this
+   * function decides what the bag IS. The two disagreed on screen — a pill
+   * reading "2 items · $50.00" beside a one-item bag, and a bag page whose
+   * summary said "Subtotal (2 items)" directly beneath its own notice that one
+   * of them had been removed.
+   */
+  itemCount: number;
   /** Everything priced. Empty lines yield an empty, zero-total pricing. */
   pricing: OrderPricing;
   /** Present only when a code was typed. Null when nobody entered one. */
@@ -112,6 +124,7 @@ export async function resolveBag(params: {
   if (wantedIds.length === 0) {
     return {
       lines: [],
+      itemCount: 0,
       pricing: priceOrder({ lines: [], shippingInCents: params.shippingInCents }),
       code: null,
       droppedProductIds: [],
@@ -229,5 +242,11 @@ export async function resolveBag(params: {
     shippingInCents: params.shippingInCents,
   });
 
-  return { lines, pricing, code, droppedProductIds };
+  return {
+    lines,
+    itemCount: lines.reduce((sum, line) => sum + line.quantity, 0),
+    pricing,
+    code,
+    droppedProductIds,
+  };
 }

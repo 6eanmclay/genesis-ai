@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { formatMoney } from "@/lib/money";
 import { readBag } from "@/lib/bag/bagStore";
-import { bagCount } from "@/lib/bag/bagCookie";
 import { resolveBag } from "@/lib/bag/resolveBag";
 import { displayPriceFor } from "@/lib/pricing/displayPrice";
 import { canStoreAcceptPayments, CHECKOUT_UNAVAILABLE_MESSAGE } from "../shared";
@@ -48,7 +47,7 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
       style={themeCssVars(theme)}
       className="min-h-screen bg-[var(--brand-background)] font-[family-name:var(--font-body)] text-[var(--brand-text)]"
     >
-      <BagBar slug={slug} count={bagCount(bag)} canAcceptPayments={canAcceptPayments} />
+      <BagBar slug={slug} count={resolved.itemCount} canAcceptPayments={canAcceptPayments} />
       {/* Deliberately NOT rendered on the bag itself — a pill inviting somebody
           to the page they are already on is noise, and it would sit on top of
           the Continue to Payment button. */}
@@ -136,7 +135,13 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
                 <h2 className="text-[15px] font-semibold">Summary</h2>
                 <dl className="mt-3 flex flex-col gap-2 text-[15px]">
                   <Row
-                    label={`Subtotal (${bagCount(bag)} item${bagCount(bag) === 1 ? "" : "s"})`}
+                    // COUNTED FROM THE RESOLVED BAG, not from the cookie
+                    // (2026-09-14). This row read bagCount(bag) while the money
+                    // beside it came from resolveBag, so a deactivated product
+                    // put "Subtotal (2 items)  $50.00" directly beneath the
+                    // notice above saying one of them had been removed — the
+                    // page contradicting itself in four lines.
+                    label={`Subtotal (${resolved.itemCount} item${resolved.itemCount === 1 ? "" : "s"})`}
                     value={formatMoney(pricing.listSubtotalInCents, store.currency)}
                   />
                   {pricing.discountInCents > 0 && (
