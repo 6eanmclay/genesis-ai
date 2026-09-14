@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { recordVisit, recordProductView } from "@/lib/attribution/visit";
 import { prisma } from "@/lib/prisma";
+import { requireVisibleStorefront, storefrontViewerRole } from "@/lib/storefront/visibility";
 import { Price, SaleName } from "../../Price";
 import { BagBar } from "../../BagBar";
 import { FloatingBag } from "../../FloatingBag";
@@ -37,12 +38,18 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug, productId } = await params;
 
+  // `store: { published: true }` here meant an owner previewing their own shop
+  // got a browser tab reading "Product not found" for a product that exists and
+  // is theirs. Scoped to the store, then judged by the same rule as the body.
   const product = await prisma.product.findFirst({
-    where: { id: productId, active: true, store: { slug, published: true } },
-    select: { name: true, description: true },
+    where: { id: productId, active: true, store: { slug } },
+    select: { name: true, description: true, storeId: true, store: { select: { published: true } } },
   });
 
   if (!product) {
+    return { title: "Product not found" };
+  }
+  if (!product.store.published && !(await storefrontViewerRole(product.storeId))) {
     return { title: "Product not found" };
   }
 
@@ -57,9 +64,14 @@ export default async function ProductDetailPage({
   const { slug, productId } = await params;
 
   const store = await prisma.store.findUnique({ where: { slug } });
-  if (!store || !store.published) {
+  if (!store) {
     notFound();
   }
+  // THE OWNER'S OWN PREVIEW REACHED THIS AND WAS REFUSED (2026-09-14). This
+  // read `!store.published` with no notion of a viewer, so every "View Details"
+  // link on a previewed storefront — which that page renders on every card —
+  // answered 404 to the person the preview exists for.
+  await requireVisibleStorefront(store);
 
   const product = await prisma.product.findFirst({
     where: { id: productId, storeId: store.id, active: true },

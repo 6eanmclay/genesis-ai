@@ -4,9 +4,8 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
 import { parseCheckoutProblem, checkoutProblemNotice } from "@/lib/orders/checkoutOutcome";
-import { auth } from "@/auth";
 import { recordVisit } from "@/lib/attribution/visit";
-import { getStoreRole } from "@/lib/permissions";
+import { requireVisibleStorefront, storefrontViewerRole } from "@/lib/storefront/visibility";
 import { subscribeToNewsletter } from "./actions";
 import { addProductToBag } from "./bagActions";
 import { Price } from "./Price";
@@ -67,12 +66,10 @@ export async function generateMetadata({
     return { title: "Store not found" };
   }
 
-  if (!store.published) {
-    const session = await auth();
-    const viewerRole = session?.user ? await getStoreRole(session.user.id, store.id) : null;
-    if (!viewerRole) {
-      return { title: "Store not found" };
-    }
+  // The same rule the page body applies, from the same module — a tab title
+  // is not the place to disagree with the document under it.
+  if (!store.published && !(await storefrontViewerRole(store.id))) {
+    return { title: "Store not found" };
   }
 
   const marketing = (store.blueprint as Blueprint | null)?.marketingAssets;
@@ -174,16 +171,15 @@ export default async function StorefrontPage({
     notFound();
   }
 
-  const session = await auth();
-  const viewerRole = session?.user ? await getStoreRole(session.user.id, store.id) : null;
-
   // Unpublished stores are only visible to their own owner/employee, previewing
   // ahead of launch — never to a logged-out visitor or another account. This
   // is what lets the dashboard embed the real storefront as a live preview
   // before a merchant has published anything; customers still get a real 404.
-  if (!store.published && !viewerRole) {
-    notFound();
-  }
+  //
+  // THE RULE MOVED OUT (2026-09-14) rather than being restated. It was written
+  // here and nowhere else, and the four sibling routes under /store/[slug] each
+  // answered it differently — see lib/storefront/visibility.ts.
+  const viewerRole = await requireVisibleStorefront(store);
 
   // ============ WHERE THIS VISITOR CAME FROM (2026-09-01) =============
   //

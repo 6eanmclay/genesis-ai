@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireVisibleStorefront } from "@/lib/storefront/visibility";
 import { themeCssVars, DEFAULT_THEME, type Theme } from "@/lib/theme";
 import { formatMoney } from "@/lib/money";
 import { readBag } from "@/lib/bag/bagStore";
@@ -30,9 +31,12 @@ export default async function BagPage({ params }: { params: Promise<{ slug: stri
 
   const store = await prisma.store.findUnique({
     where: { slug },
-    select: { id: true, name: true, currency: true, theme: true },
+    select: { id: true, name: true, currency: true, theme: true, published: true },
   });
   if (!store) notFound();
+  // Same rule as the storefront: a shop that is not open is a 404 to everyone
+  // but the people who work there. This named the store to anybody who asked.
+  await requireVisibleStorefront(store);
 
   const bag = await readBag(slug);
   const resolved = await resolveBag({ storeId: store.id, bag });

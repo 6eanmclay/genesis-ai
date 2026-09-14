@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
+import { requireVisibleStorefront } from "@/lib/storefront/visibility";
 import { ShippingStep } from "./ShippingStep";
 
 // The shipping step's own route (2026-08-20).
@@ -19,6 +20,9 @@ export default async function ShipPage({
 
   const store = await prisma.store.findUnique({ where: { slug }, select: { id: true, published: true, currency: true } });
   if (!store) notFound();
+  // `published` was already selected here and never read. Same rule as every
+  // other route under /store/[slug] now — see lib/storefront/visibility.ts.
+  await requireVisibleStorefront(store);
 
   const product = await prisma.product.findFirst({
     where: { id: productId, storeId: store.id, active: true },

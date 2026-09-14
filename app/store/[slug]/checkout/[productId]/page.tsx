@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireVisibleStorefront } from "@/lib/storefront/visibility";
 import { productSupportsLiveShipping } from "@/lib/shipping/checkoutShipping";
 import { canStoreAcceptPayments } from "../../shared";
 import { availableProviders } from "@/lib/payments/router";
@@ -28,9 +29,16 @@ export default async function CheckoutPage({
 
   const store = await prisma.store.findUnique({
     where: { slug },
-    select: { id: true, currency: true },
+    select: { id: true, currency: true, published: true },
   });
   if (!store) notFound();
+  // A SHOP THAT IS NOT OPEN CANNOT SELL (2026-09-14). This page re-checks "the
+  // same gates the Buy button uses" below, and publication is one of them: the
+  // button only ever renders on a storefront that has already passed it.
+  // Anonymously, an unpublished store's checkout answered 200 and named the
+  // product — so a link shared while a shop was live kept selling after the
+  // owner took the shop down.
+  await requireVisibleStorefront(store);
 
   const product = await prisma.product.findFirst({
     where: { id: productId, storeId: store.id, active: true },
