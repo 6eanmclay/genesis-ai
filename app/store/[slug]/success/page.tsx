@@ -18,6 +18,38 @@ export default async function CheckoutSuccessPage({
   let amountInCents: number | null = null;
   let productName: string | null = null;
 
+  // ============ THE REDIRECT IS NOT A RECEIPT (2026-09-14) ============
+  //
+  // This page printed "Thank you for your purchase!" and "Your order is
+  // confirmed." unconditionally — for every arrival, with no evidence of any
+  // kind. Rendered, five different arrivals produced the same claim:
+  //
+  //   no query string at all          "Your order is confirmed."
+  //   another store's order id        "Your order is confirmed."
+  //   a REFUNDED order                "Returned Ring — $50.00 · confirmed."
+  //   a Stripe session that is gone   "Your order is confirmed."
+  //   a real paid order               correct, and the only evidenced one
+  //
+  // Sean's standing rule is that Genesis must never infer the money was
+  // received simply because an order exists; this inferred it from the URL
+  // being visited. The contract is the one already set for Billing's own
+  // return states: the provider's redirect establishes that somebody came back
+  // from checkout, and only persisted state establishes that they paid. The
+  // webhook remains the authority — for Stripe it is what creates the paid
+  // Order row at all (lib/payments/stripeEvent.ts), so at redirect time the
+  // row may legitimately not exist yet.
+  //
+  //   confirmed  Stripe says payment_status "paid", or a real Order for THIS
+  //              store is already recorded as paid.
+  //   pending    they plainly came back from a checkout, and nothing confirms
+  //              it yet. Said plainly rather than dressed as success.
+  //   unknown    nothing identifies a purchase at all. Not a thank-you.
+  //
+  // Delayed-notification payment methods are the ordinary case for pending:
+  // Stripe returns payment_status "unpaid" at redirect and settles later, and
+  // which methods a merchant enables is their choice, not Genesis's.
+  let outcome: "confirmed" | "pending" | "unknown" = "unknown";
+
   // WHICH MONEY THE CUSTOMER JUST SPENT (2026-08-22). Hoisted out of the
   // Stripe branch below, which already needed the store for its connected
   // account and is no longer the only branch that needs it.
@@ -55,8 +87,15 @@ export default async function CheckoutSuccessPage({
       amountInCents = session.amount_total;
       productName = session.line_items?.data[0]?.description ?? null;
       if (session.currency) currency = session.currency.toUpperCase();
+      // STRIPE'S OWN ANSWER, not the fact that it answered. A retrieved
+      // session proves a checkout existed; payment_status is the only field
+      // that says money moved.
+      outcome = session.payment_status === "paid" ? "confirmed" : "pending";
     } catch {
-      // Invalid or missing session id — still show a generic thank-you below.
+      // The session could not be read. They still arrived from a checkout, so
+      // this is not "no purchase" — it is a purchase Genesis cannot confirm
+      // from here, which is what pending says.
+      outcome = "pending";
     }
   } else if (orderId) {
     // PayPal's flow captures synchronously and passes our own Order.id
@@ -81,13 +120,17 @@ export default async function CheckoutSuccessPage({
     if (order) {
       amountInCents = order.amountInCents;
       productName = order.productName;
+      // PAID IS THE ONLY STATUS THAT CONFIRMS. A refunded order rendered here
+      // as "Returned Ring — $50.00 · Your order is confirmed.", which is money
+      // the customer has already had back.
+      outcome = order.status === "paid" ? "confirmed" : "pending";
     }
   }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-8 text-center dark:bg-black">
-      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-        Thank you for your purchase!
+      <h1 className="text-2xl font-semibold text-black dark:text-zinc-50" data-testid="success-heading">
+        {outcome === "unknown" ? "We couldn’t find that order" : "Thank you for your purchase!"}
       </h1>
       {productName && (
         <p className="mt-3 text-zinc-600 dark:text-zinc-400">
@@ -95,8 +138,12 @@ export default async function CheckoutSuccessPage({
           {amountInCents != null && ` — ${formatMoney(amountInCents, currency)}`}
         </p>
       )}
-      <p className="mt-2 text-sm text-zinc-500">
-        Your order is confirmed.
+      <p className="mt-2 text-sm text-zinc-500" data-testid="success-status">
+        {outcome === "confirmed"
+          ? "Your order is confirmed."
+          : outcome === "pending"
+            ? "We’re confirming your payment. You’ll get an email as soon as it’s complete."
+            : "If you have just paid, check the link in your confirmation email."}
       </p>
       <Link
         href={`/store/${slug}`}
