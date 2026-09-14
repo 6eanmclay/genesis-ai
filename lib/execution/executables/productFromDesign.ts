@@ -324,6 +324,17 @@ async function createFromPlacementDesign(
         // ON SALE. This is the whole difference between Save and Create -- the
         // supplier has confirmed it holds every placement, so it can be made.
         active: true,
+        // WHAT THIS COSTS THE OWNER (2026-09-14). Frozen onto the draft when
+        // they were looking at it, because the supplier's price is what makes
+        // profit reportable at all: getProfitSummary reads Product.costInCents
+        // live — no cost is captured on the Order — so a null here is not a gap
+        // in one report, it is every sale of this product counted forever as
+        // one whose margin Genesis cannot work out.
+        //
+        // Null stays null for a draft saved before this was recorded, and for a
+        // supplier that would not price the variant. That is the honest answer
+        // and the same one lib/creation/saveDesign.ts gives.
+        costInCents: placement.costInCents,
         sourceKind: "PRINT_ON_DEMAND",
         externalProductId: created.externalProductId,
         externalVariantId: placement.externalVariantId,

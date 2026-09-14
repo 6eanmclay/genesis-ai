@@ -419,6 +419,34 @@ export const PlacementDesignSchema = z.object({
     .default([]),
   retailPriceInCents: z.number().int().nullable().default(null),
   /**
+   * WHAT THE SUPPLIER CHARGES FOR THE REFERENCE VARIANT, frozen with everything
+   * else the owner was looking at.
+   *
+   * ============ IT WAS THE ONE FACT ON THAT SCREEN NOT KEPT (2026-09-14) ==
+   *
+   * The Creation Station fetches real wholesale prices — Printful's catalogue
+   * variants carry no price at all, so lib/creation/garment.ts goes to
+   * /v2/catalog-products/{id}/prices for them, and the comment on the field
+   * that renders it says why: "Null when Printful did not price it — said
+   * plainly rather than filled in, which is the whole reason every product used
+   * to read $75."
+   *
+   * That number is printed one line above the Create button — "front · Ash ·
+   * costs $12.50" — and then stopped there. The draft froze the colour, the
+   * hex, the size, the print areas, the sellable sizes and the RETAIL price,
+   * and not this. So every product made in Studio reached the catalogue with
+   * costInCents null, and Analytics reported "0 of 1 orders" while J4 said "I
+   * can't tell you yet — no product you've sold has a recorded cost."
+   *
+   * THE REFERENCE VARIANT'S price, matching lib/creation/saveDesign.ts, which
+   * has always written `costInCents: variant.costInCents` on the other path out
+   * of this editor. Sizes of one colourway can differ by a little and Product
+   * has no variant model to hold that; one real figure from the variant the
+   * design was actually laid out against is the answer that path already
+   * settled on, and two paths writing the same row should not disagree.
+   */
+  costInCents: z.number().int().nullable().default(null),
+  /**
    * WHAT BECAME OF IT. Null until the owner presses Create.
    *
    * Kept on the draft rather than inferred from a product pointing back, so

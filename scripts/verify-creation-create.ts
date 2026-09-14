@@ -186,6 +186,31 @@ async function main() {
   assert("and the design records which product it became",
     /designId: recordId/.test(src) && /supplierProductCreated: true/.test(src));
 
+  // ============ THE COST REACHES THE PRODUCT (2026-09-14) =============
+  //
+  // Source, for the same reason as the two above: this write only runs once a
+  // supplier has accepted the product. The draft half IS executed — see
+  // verify-creation-draft's "the supplier's cost survives being saved and read
+  // back" — so what is left to pin here is that the row takes it from the
+  // draft rather than leaving it null.
+  //
+  // Genesis fetches real wholesale prices deliberately (garment.ts goes to a
+  // second Printful endpoint for them, because catalogue variants carry no
+  // price) and prints the figure one line above the Create button. It stopped
+  // there: the product was written with no cost, so getProfitSummary — which
+  // reads Product.costInCents live, no cost being captured on the Order —
+  // counted every sale as one whose margin is unknown, and J4 said it could
+  // not tell the owner anything about profit.
+  assert("the product records what the supplier charges",
+    /costInCents: placement\.costInCents/.test(src),
+    "without it every Studio product sells forever as one whose margin Genesis cannot work out");
+  // NOT RE-ASKED AT CREATION TIME. The draft froze the figure the owner was
+  // shown; re-deriving it here would quietly price the product against a
+  // catalogue that may have moved since they looked.
+  assert("  taken from the draft, not re-fetched from the supplier",
+    !/getSupplierPrices/.test(src),
+    "the draft is the record of what they were told it would cost");
+
   const printful = readFileSync(join(process.cwd(), "lib", "fulfillment", "printful.ts"), "utf8");
   assert("the placements returned are READ BACK, not echoed",
     /store\/products\/\$\{externalProductId\}/.test(printful),

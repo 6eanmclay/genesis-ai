@@ -116,6 +116,27 @@ async function main() {
 
   eq("the owner's own name for it", draft.placement?.productName, "My Hoodie");
   eq("and their price", draft.placement?.retailPriceInCents, 5500);
+  // ============ AND WHAT IT COSTS THEM (2026-09-14) ==================
+  //
+  // The supplier's own wholesale price for the reference variant. It was the
+  // one fact on the Create screen the draft did not freeze: the owner reads
+  // "front · Black · costs $21.99" one line above the button, and the product
+  // reached the catalogue with costInCents null — so getProfitSummary counted
+  // every sale of it as one whose margin could not be worked out, and J4 said
+  // "I can't tell you yet, no product you've sold has a recorded cost."
+  eq("and what the supplier charges for it", draft.placement?.costInCents, 2199);
+  {
+    // NULL IS A REAL ANSWER, NOT ZERO. Printful's catalogue variants carry no
+    // price at all and the separate prices endpoint does not cover every
+    // product; an unpriced variant must reach the product as "unknown", which
+    // is what the profit reports are built to say. Zero would read as free.
+    const unpriced = toDraft(design(), {
+      garment: garment({ variants: [variant({ costInCents: null })] }),
+      name: "My Hoodie", retailPriceInCents: 5500, blanks: BLANKS,
+    });
+    eq("an unpriced variant records no cost rather than a free one",
+      unpriced.placement?.costInCents, null);
+  }
   eq("the colour, by name", draft.placement?.color, "Black");
   eq("the size", draft.placement?.size, "M");
   eq("who makes it, read off the garment", draft.placement?.provider, "PRINTFUL");
@@ -150,6 +171,12 @@ async function main() {
     latest.success && latest.data.placement?.placements.front?.[0]?.x === 0.9,
     `x was ${latest.success ? latest.data.placement?.placements.front?.[0]?.x : "unparseable"}`);
   eq("saved as the owner's own work", rows[0]?.provenance, "OWNER");
+  // THROUGH THE DATABASE AND BACK THROUGH THE SCHEMA, which is the only form
+  // of the cost the executable ever sees: productFromDesign.ts reads this
+  // record, not the garment, so a cost that survives toDraft but not the round
+  // trip would still reach the catalogue as null.
+  eq("the supplier's cost survives being saved and read back",
+    latest.success ? latest.data.placement?.costInCents : "unparseable", 2199);
 
   // ======================================================================
   console.log("\n=== 4. A draft that became a product still says so ===\n");

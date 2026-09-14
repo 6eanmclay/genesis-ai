@@ -91,6 +91,10 @@ export function toDraft(design: ProductDesign, context: DraftContext, previous?:
       placements: design.placements,
       printAreas: garment.printAreas,
       retailPriceInCents,
+      // WHAT IT COSTS, beside what it sells for. `variant` is already resolved
+      // from the supplier's own garment two lines above — colour, hex and size
+      // all come off it — and this is the one field on it that was not carried.
+      costInCents: variant?.costInCents ?? null,
       // CARRIED FORWARD, NEVER RESET. Re-saving a draft that has already been
       // created must not make it look uncreated — that would offer the owner a
       // second 2-point Create for a product they already have.
