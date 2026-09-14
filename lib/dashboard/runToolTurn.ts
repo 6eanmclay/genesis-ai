@@ -38,6 +38,13 @@ export interface RunToolsInput {
   /** The authenticated viewer. */
   userId: string;
   /**
+   * The task this turn is about, already resolved by buildTurnContext.
+   *
+   * Carried rather than looked up so one turn asks once, and so a handler can
+   * never quietly resolve a different answer than the one J4 was told about.
+   */
+  taskId?: string | null;
+  /**
    * What the viewer is to this business.
    *
    * BOTH CALLERS ALREADY REFUSED AN UNAUTHORIZED TURN, and this checks again
@@ -165,6 +172,8 @@ export function toolContextFor(
   return {
     storeId: input.storeId,
     userId: input.userId,
+    // Straight through. Resolved once for the turn; every tool in it agrees.
+    taskId: input.taskId ?? null,
     userMessage: input.userMessage,
     conversationalReply: input.conversationalReply,
     input: tool.input,

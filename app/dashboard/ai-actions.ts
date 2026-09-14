@@ -2464,6 +2464,10 @@ async function applyGenesisMessageToStore(
   if (chosenTool) {
     const run = await runPlannedTools({
       storeId: store.id,
+      // THE TASK THIS TURN IS ABOUT, resolved once by buildTurnContext above
+      // and reused rather than asked again. Null unless the conversation or
+      // the thread names exactly one unfinished task.
+      taskId: turn.relevantTaskId,
       userId,
       role,
       userMessage,
@@ -2974,6 +2978,9 @@ async function applyGenesisMessageToStore(
       const approval = await prisma.approvalRequest.create({
         data: {
           storeId: store.id,
+          // Same rule as every tool-created approval: the task this turn is
+          // demonstrably about, resolved once above, or null.
+          taskId: turn.relevantTaskId,
           recommendationId: null,
           actionType,
           input: parsedInput.data as object,
@@ -3107,7 +3114,7 @@ async function applyGenesisMessageToStore(
               decisionMode: "chat_auto",
             },
           });
-          await completeTasksForAction(store.id, actionType);
+          await completeTasksForAction(store.id, actionType, approval.taskId);
           executed = true;
         }
       }
@@ -4968,7 +4975,7 @@ export async function performApproveGenesisActionGroup(
     // it exactly like the conversational auto-execute path does (see
     // proposeAction) — completion tracking shouldn't depend on how the
     // execution happened.
-    await completeTasksForAction(storeId, approval.actionType);
+    await completeTasksForAction(storeId, approval.actionType, approval.taskId);
     await logApprovalDecisionEvent({
       userId,
       storeId,
@@ -5290,7 +5297,7 @@ export async function performApproveGenesisAction(approvalRequestId: string): Pr
   // (see proposeAction) and the batch-approve path (approveGenesisActionGroup)
   // — a real Task waiting on this actionType completes regardless of which
   // of the three approval surfaces actually triggered the execution.
-  await completeTasksForAction(storeId, approval.actionType);
+  await completeTasksForAction(storeId, approval.actionType, approval.taskId);
 
   await logApprovalDecisionEvent({
     userId,
@@ -5423,6 +5430,11 @@ export async function revertApprovalRequest(
     await prisma.approvalRequest.create({
       data: {
         storeId,
+        // INHERITED, NEVER RE-RESOLVED (2026-09-14). A revert belongs to the
+        // same piece of work the thing it undoes belonged to. Asking
+        // relevantTaskFor again would answer about the turn the owner is in
+        // NOW, which may be a different task entirely — or none.
+        taskId: original.taskId,
         actionType: original.actionType,
         // Deliberately swapped: reverting means restoring the ORIGINAL's
         // previousValues, and the thing being undone (for this new row's own

@@ -107,15 +107,46 @@ export async function getOpenTasks(storeId: string) {
 }
 
 // BUSINESS_ASSETS_ARCHITECTURE.md M3 — real dashboard-updates-on-completion.
+// ============ IDENTITY FIRST, RESEMBLANCE ONLY FOR LEGACY ===========
+//
 // Called after any successful execute() of a real GENESIS_ACTIONS type
-// (conversational auto-execute in proposeAction, or a normal manual
-// approve) — whichever real task was waiting on this exact action type
-// completes, whether the execution was automatic or a manual click.
-// Scoped to IN_PROGRESS (a task the owner has actually opened a
-// conversation for) rather than every OPEN task sharing this actionType,
-// so an unrelated still-untouched task of the same type never gets
-// silently marked done by someone else's action.
-export async function completeTasksForAction(storeId: string, actionType: string): Promise<void> {
+// (conversational auto-execute in proposeAction, or a normal manual approve).
+//
+// TWO PATHS, AND THEY ARE NOT EQUALLY AUTHORITATIVE.
+//
+//   `taskId` — the approval names the exact Task it came out of, stamped at
+//   creation from the conversation or the thread. This is the real answer and
+//   it is used whenever it exists.
+//
+//   actionType — the LEGACY path, and nothing more. It completes whichever
+//   IN_PROGRESS task happens to share an action type, which is a guess: two
+//   tasks of one type both close, and the right one closing is luck. It exists
+//   only for approvals written before taskId did, and for the creation paths
+//   that genuinely have no task identity (the AI review, autonomous findings,
+//   storefront proposals, marketing assets) — see the trace in the commit that
+//   added the column. It is not a fallback to be relied on for new work; it is
+//   a fallback to be outlived.
+//
+// The actionType path stays scoped to IN_PROGRESS — a task the owner actually
+// opened — so an untouched task of the same type is never swept up. That
+// narrows the guess; it does not make it an identity.
+export async function completeTasksForAction(
+  storeId: string,
+  actionType: string,
+  /** The task the originating approval named, when it named one. */
+  taskId?: string | null,
+): Promise<void> {
+  if (taskId) {
+    // STORE-SCOPED, so an id from another business completes nothing here.
+    // Status-scoped for the same reason the legacy path is: a task already
+    // finished or dismissed is not re-finished by a later action.
+    await prisma.task.updateMany({
+      where: { id: taskId, storeId, status: { in: ["OPEN", "IN_PROGRESS", "AWAITING_INPUT"] } },
+      data: { status: "COMPLETED", completedAt: new Date() },
+    });
+    return;
+  }
+
   await prisma.task.updateMany({
     where: { storeId, actionType, status: "IN_PROGRESS" },
     data: { status: "COMPLETED", completedAt: new Date() },

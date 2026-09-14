@@ -77,6 +77,19 @@ export interface ToolTurnContext {
   storeId: string;
   /** The authenticated viewer. Authorization already happened; this is for attribution. */
   userId: string;
+  /**
+   * THE TASK THIS TURN IS ABOUT, when the turn is demonstrably about one.
+   *
+   * Resolved ONCE per turn by buildTurnContext (lib/j4/relevantTask.ts) from
+   * the conversation or the thread, and passed down — never re-derived here,
+   * and never inferred from what a handler happens to be doing.
+   *
+   * Null is the ordinary case and means exactly what it says: this turn is not
+   * demonstrably about one piece of unfinished work, so an approval it creates
+   * belongs to no task. Ambiguity resolves to null too — two open tasks in a
+   * thread is not a reason to pick one.
+   */
+  taskId?: string | null;
   userMessage: string;
   /**
    * The model's own accompanying text, if it wrote any.
@@ -982,6 +995,8 @@ function trackingHandler(mode: "attach" | "correct"): ToolHandler {
     await prisma.approvalRequest.create({
       data: {
         storeId: ctx.storeId,
+        // FROM THE TURN, NOT FROM THIS HANDLER. Null unless the conversation or the thread named exactly one unfinished task — see lib/j4/relevantTask.ts.
+        taskId: ctx.taskId ?? null,
         recommendationId: null,
         actionType,
         topicKey: deriveTopicKey(actionType, order.id),
@@ -1064,6 +1079,8 @@ const toggleOrderFulfilment: ToolHandler = async (ctx) => {
   await prisma.approvalRequest.create({
     data: {
       storeId: ctx.storeId,
+      // FROM THE TURN, NOT FROM THIS HANDLER. Null unless the conversation or the thread named exactly one unfinished task — see lib/j4/relevantTask.ts.
+      taskId: ctx.taskId ?? null,
       recommendationId: null,
       actionType: "toggle_order_fulfilled",
       topicKey: deriveTopicKey("toggle_order_fulfilled", match.order.id),
@@ -1166,6 +1183,8 @@ async function requestEndOfSale(ctx: ToolTurnContext, promotionName: string): Pr
   await prisma.approvalRequest.create({
     data: {
       storeId: ctx.storeId,
+      // FROM THE TURN, NOT FROM THIS HANDLER. Null unless the conversation or the thread named exactly one unfinished task — see lib/j4/relevantTask.ts.
+      taskId: ctx.taskId ?? null,
       recommendationId: null,
       actionType: "update_promotion",
       topicKey: deriveTopicKey("update_promotion", target.id),
@@ -1341,6 +1360,8 @@ const requestSale: ToolHandler = async (ctx) => {
   await prisma.approvalRequest.create({
     data: {
       storeId: ctx.storeId,
+      // FROM THE TURN, NOT FROM THIS HANDLER. Null unless the conversation or the thread named exactly one unfinished task — see lib/j4/relevantTask.ts.
+      taskId: ctx.taskId ?? null,
       recommendationId: null,
       actionType: "create_promotion",
       topicKey: deriveTopicKey("create_promotion", null),
@@ -1427,6 +1448,8 @@ const requestProductRemoval: ToolHandler = async (ctx) => {
     await prisma.approvalRequest.create({
       data: {
         storeId: ctx.storeId,
+        // FROM THE TURN, NOT FROM THIS HANDLER. Null unless the conversation or the thread named exactly one unfinished task — see lib/j4/relevantTask.ts.
+        taskId: ctx.taskId ?? null,
         recommendationId: null,
         actionType: "delete_product",
         // The same canonical derivation the backfill uses, so a decision made
@@ -2494,6 +2517,8 @@ export function makeRequestImageChange(
         await prisma.approvalRequest.create({
           data: {
             storeId: ctx.storeId,
+            // FROM THE TURN, NOT FROM THIS HANDLER. Null unless the conversation or the thread named exactly one unfinished task — see lib/j4/relevantTask.ts.
+            taskId: ctx.taskId ?? null,
             recommendationId: null,
             actionType: "update_product_image",
             topicKey: deriveTopicKey("update_product_image", null),
@@ -2827,6 +2852,8 @@ export function makeRequestProductContentChange(
       await prisma.approvalRequest.create({
         data: {
           storeId: ctx.storeId,
+          // FROM THE TURN, NOT FROM THIS HANDLER. Null unless the conversation or the thread named exactly one unfinished task — see lib/j4/relevantTask.ts.
+          taskId: ctx.taskId ?? null,
           recommendationId: null,
           actionType: "update_product",
           topicKey: deriveTopicKey("update_product", { productId: product.id, ...changedFields }),

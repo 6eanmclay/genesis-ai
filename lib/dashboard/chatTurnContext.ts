@@ -80,6 +80,15 @@ export interface TurnContext {
   selection: SelectionContext;
   /** The lines that become the user turn, in a fixed order. */
   parts: string[];
+  /**
+   * THE WORK THIS TURN IS ABOUT, resolved once.
+   *
+   * Handed back so a tool run in the same turn can stamp an approval with the
+   * task it came out of without asking again — one query per turn, not one per
+   * approval. Null whenever relevantTaskFor found nothing or found more than
+   * one, which is the same silence J4 is given.
+   */
+  relevantTaskId: string | null;
 }
 
 /**
@@ -148,6 +157,7 @@ export async function buildTurnContext(input: TurnContextInput): Promise<TurnCon
   });
   const taskLine = describeRelevantTask(relevantTask);
   if (taskLine) parts.push(taskLine);
+  const relevantTaskId = relevantTask?.id ?? null;
 
   // THE PROPOSAL CURRENTLY ON THE TABLE — the line the Server Action was
   // missing. Without it, "I don't like that, keep it handmade" reads as a brand
@@ -186,5 +196,5 @@ export async function buildTurnContext(input: TurnContextInput): Promise<TurnCon
   const economicsLine = describeOutstandingForJ4(await outstandingEconomicsQuestions(input.storeId));
   if (economicsLine) parts.push(economicsLine);
 
-  return { understanding, digest, business, selection, parts };
+  return { understanding, digest, business, selection, parts, relevantTaskId };
 }

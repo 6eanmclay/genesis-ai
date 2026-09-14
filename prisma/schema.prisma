@@ -1901,6 +1901,22 @@ model CognitiveOutput {
 model ApprovalRequest {
   id                   String    @id @default(cuid())
   storeId              String
+  /// WHICH TASK THIS APPROVAL CAME OUT OF (2026-09-14).
+  ///
+  /// Set only when the approval was genuinely created while the owner was
+  /// working a Task, resolved at creation time from the conversation or the
+  /// thread (lib/j4/relevantTask.ts) — never from actionType, wording, record
+  /// identity or recency, and never resolved later.
+  ///
+  /// NULL IS ORDINARY AND LEGITIMATE. Most approvals do not come from a task:
+  /// the AI review creates work rather than running inside it, autonomous
+  /// findings have no owner thread, and every row written before this column
+  /// existed keeps a null that means exactly that.
+  ///
+  /// Not a relation, so a deleted Task cannot cascade into deleting an approval
+  /// that really happened — the same reason Store.createdFromDraftId is a plain
+  /// column. A dangling id means the task is gone, which is the truth.
+  taskId               String?
   recommendationId     String?
   // Phase 3 Milestone 6 (J4 Cognitive Layer) — parallel to
   // recommendationId above, not a replacement: set when this approval

@@ -644,6 +644,10 @@ export async function POST(request: Request) {
         // one thing regardless of which path served the message.
         const run = await runPlannedTools({
           storeId: store.id,
+          // THE TASK THIS TURN IS ABOUT, resolved once by buildTurnContext above
+          // and reused rather than asked again. Null unless the conversation or
+          // the thread names exactly one unfinished task.
+          taskId: turn.relevantTaskId,
           userId,
           role,
           userMessage,
