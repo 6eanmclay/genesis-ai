@@ -25,13 +25,20 @@ import { internalItemId } from "./internalMapper";
 // on this product?" is answered as UNIT ECONOMICS (price, cost, what you keep
 // per sale), not as a rival per-product profit total.
 //
-// That is a deliberate choice, not an omission. The two sources genuinely
-// disagree: getProfitSummary reads Order rows all-time and counts a refunded
-// order's amount as revenue, while getItemPerformance reads canonical
-// transactions net of refunds over a window. Reconciling them would mean
-// changing getProfitSummary, which would change Analytics — out of scope, and
-// the wrong fix regardless. Publishing one total and one per-unit view means
-// there is no second total to contradict the first.
+// That is a deliberate choice, not an omission. The two sources still differ:
+// getProfitSummary reads Order rows all-time, while getItemPerformance reads
+// canonical transactions over a window. Reconciling THOSE would mean making one
+// adopt the other's basis and window — still out of scope, and still the wrong
+// fix. Publishing one total and one per-unit view means there is no second
+// total to contradict the first.
+//
+// ONE HALF OF THE OLD GAP IS CLOSED (2026-09-14). This paragraph used to name
+// a third difference — that getProfitSummary counted a refunded order's amount
+// as revenue — and left it "for whoever revisits refund handling as its own
+// change". That change has been made: it now excludes refunded orders with
+// getOrderSummary's own status filter. Both sources are net of refunds; what
+// remains between them is basis and window, which is the part that is
+// deliberate.
 
 export type MarginCoverage = "none" | "partial" | "complete";
 
@@ -86,11 +93,11 @@ export function summarizeMarginCoverage(summary: {
 //
 // ONE VARIABLE CHANGES, DELIBERATELY. M7 uses the same order basis M5 uses and
 // subtracts recorded postage, so net = M5's profit − postage whenever coverage
-// is complete (proved in the suite). That includes inheriting one known quirk
-// of getProfitSummary: a refunded order's amount still counts as revenue.
-// Correcting that here would make M7 differ from M5 in two ways at once and
-// leave nobody able to explain the gap — it is inherited knowingly, stated
-// plainly, and left for whoever revisits refund handling as its own change.
+// is complete (proved in the suite). That invariant is why the refund quirk
+// this used to inherit was never corrected HERE: doing so would have made M7
+// differ from M5 in two ways at once. It was fixed at the source instead
+// (2026-09-14, getProfitSummary excludes refunded orders), so M5 and M7 moved
+// together and the one-variable relationship is untouched.
 //
 // NOTHING IS EVER ESTIMATED. Postage is used only where a real label purchase
 // recorded it. It is never derived from weight, carrier, product, or from what

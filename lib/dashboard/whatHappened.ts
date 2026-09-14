@@ -100,8 +100,44 @@ export async function getProfitSummary(storeId: string): Promise<{
   ordersWithKnownCost: number;
   ordersWithUnknownCost: number;
 }> {
+  // ============ REFUNDED MONEY IS NOT PROFIT EITHER (2026-09-14) ======
+  //
+  // The same correction getOrderSummary took on 2026-08-20, forty lines above
+  // this one, and for the same reason in its words: "a refund left the
+  // dashboard still reporting the money as earned. The owner was being shown
+  // income they had given back."
+  //
+  // This still summed every Order row, so on one screen, at one moment, a
+  // store with two paid sales and one refund of the same value rendered
+  // $100.00 in revenue — correct, that fix working — beside $90.00 profit.
+  // Arithmetically impossible with a $20 cost on a $50 sale, and closer to
+  // revenue than the truthful $60.00.
+  //
+  // KNOWN AND DEFERRED UNTIL NOW, not newly discovered:
+  // lib/businessModel/profitability.ts names it — "a refunded order's amount
+  // still counts as revenue... inherited knowingly, stated plainly, and left
+  // for whoever revisits refund handling as its own change". This is that
+  // change, approved by Sean as a correction to an existing financial
+  // invariant rather than a new Analytics decision.
+  //
+  // SAME STATUS SEMANTICS, NO NEW VOCABULARY. Order.status defaults to "paid"
+  // and the only other value any payment path writes is "refunded", so this is
+  // getOrderSummary's own `{ status: { not: "refunded" } }` and nothing more.
+  //
+  // AND IT LEAVES BOTH SIDES OF THE FRACTION. getOrderSummary deliberately
+  // keeps refunded orders in its COUNT, because one genuinely happened and
+  // hiding it would make a refund-heavy month look quiet. That reasoning does
+  // not carry here: these counts are not "how many orders happened", they are
+  // the denominator of "how much of your profit could be worked out", and an
+  // order that earned nothing is not profit whose cost is unknown — it is not
+  // profit at all.
+  //
+  // Downstream is untouched by construction. summarizeMarginCoverage (M5) and
+  // planNetOfPostage (M7) consume the summary object returned below, not this
+  // query, so their logic is unchanged and net = M5 profit − postage still
+  // holds; both now rest on a correct figure instead of a known-wrong one.
   const orders = await prisma.order.findMany({
-    where: { storeId },
+    where: { storeId, status: { not: "refunded" } },
     select: { amountInCents: true, product: { select: { costInCents: true } } },
   });
 
