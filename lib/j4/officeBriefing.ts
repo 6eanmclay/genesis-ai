@@ -197,6 +197,14 @@ export interface BriefingInput {
     // it. officeWork now depends on this value meaning what it says.
     genesisState: ObservationState;
     actionHref?: string | null;
+    /**
+     * WHICH CONDITION THIS IS, so the Office can ask what it needs.
+     *
+     * Optional because not every producer of an observation row is Commerce,
+     * and an absent key means "nothing declared" — which falls through to the
+     * behaviour this had before needs existed. See lib/j4/observationNeeds.ts.
+     */
+    dedupeKey?: string | null;
     firstNoticedAt?: Date | string | null;
   }[];
   now?: Date;

@@ -1,5 +1,7 @@
 import { EXECUTION_ACTIONS } from "@/lib/execution/actions";
 import { LEGACY_BUSINESS_BASE, sectionHref } from "@/lib/dashboard/navConfig";
+import { J4_CANNOT } from "./boundaries";
+import { observationNeedFor } from "./observationNeeds";
 
 /**
  * WHAT THE OWNER CAN ACTUALLY DO ABOUT A THING J4 SURFACED.
@@ -353,9 +355,44 @@ export function officeActionForExplanation(
  * spelling onto the business being viewed and nothing else.
  */
 export function officeActionForObservation(
-  observation: { actionHref?: string | null; summary: string },
+  observation: { actionHref?: string | null; summary: string; dedupeKey?: string | null },
   basePath: string,
 ): OfficeAction {
+  // ============ WHAT DOES IT NEED? ASKED FIRST (2026-09-14) ===========
+  //
+  // Before this, an href was the whole answer: `open` with one, `none`
+  // without, and sectionFor maps BOTH to "noticed". Measured on the five real
+  // observations the natural cron produced on 2026-09-14, every one landed
+  // under "I have seen these and cannot act on them yet" — including one whose
+  // own summary says "I cannot send them: no email provider is connected yet."
+  //
+  // So the question is asked in the right order now: what does this need, and
+  // only then where does it go. The answer comes from the producer via
+  // observationNeedFor — this function learns nothing about Commerce, and a
+  // key nobody has declared falls through to exactly the behaviour below.
+  //
+  // THE DESTINATION IS STILL THE PRODUCER'S. provideAt reuses the row's own
+  // actionHref rather than a second address declared beside the need: one
+  // destination, one source, which is the whole reason these rows were correct
+  // about where to go even while they were wrong about what they were.
+  const need = observation.dedupeKey ? observationNeedFor(observation.dedupeKey) : null;
+  if (need) {
+    const boundary = J4_CANNOT.find((b) => b.id === need.boundary);
+    // A need citing a boundary that does not exist is a bug in the producer's
+    // map, not a message for an owner — same refusal actionForNeed makes.
+    if (boundary) {
+      return {
+        kind: "needs_owner",
+        missing: boundary.missing,
+        what: need.what,
+        because: boundary.because,
+        ...(observation.actionHref
+          ? { provideAt: { label: "Open", href: sectionHref(observation.actionHref, basePath) } }
+          : {}),
+      };
+    }
+  }
+
   if (observation.actionHref) {
     return { kind: "open", label: "Open", href: sectionHref(observation.actionHref, basePath) };
   }

@@ -1,6 +1,7 @@
 import { buildStoreChatUnifiedTools } from "@/lib/execution/genesisTools";
 import { sectionHref } from "@/lib/dashboard/navConfig";
-import type { OfficeAction, OwnerRequirement } from "./officeActions";
+import { J4_CANNOT, type BoundaryId } from "./boundaries";
+import type { OfficeAction } from "./officeActions";
 
 /**
  * WHAT J4 CANNOT DO, AND WHOSE PROBLEM THAT IS.
@@ -85,50 +86,14 @@ function catalogue(): Set<string> {
   return new Set(buildStoreChatUnifiedTools().map((t) => t.name));
 }
 
-/** Something J4 cannot do because the thing required is not software. */
-export interface Boundary {
-  id: string;
-  /** Which kind of missing thing this is, for the Office. */
-  missing: OwnerRequirement;
-  /** Why J4 cannot supply it, in the owner's terms. Never an apology. */
-  because: string;
-}
-
-/**
- * The closed list of boundaries.
- *
- * Closed on purpose. A boundary is a claim about the world, not about the
- * backlog, and adding one is a decision somebody makes rather than a default
- * anything falls into. Four, because four is what can currently be defended.
- */
-export const J4_CANNOT: readonly Boundary[] = [
-  {
-    id: "photograph_physical_object",
-    missing: "capability",
-    because:
-      "I can generate images, but I cannot photograph something that exists in your workshop. A picture of the real thing has to come from you.",
-  },
-  {
-    id: "attest_to_owner_experience",
-    missing: "capability",
-    because:
-      "I can write, but I cannot claim your experience as if it were mine. What you have actually done has to come from you.",
-  },
-  {
-    id: "choose_owner_intent",
-    missing: "decision",
-    because:
-      "I can lay out the options and what each would cost you. Which one you want the business to be is yours to settle.",
-  },
-  {
-    id: "grant_access_on_owners_behalf",
-    missing: "permission",
-    because:
-      "I cannot authorise myself against an account you own. Connecting it is something only you can do.",
-  },
-] as const;
-
-export type BoundaryId = (typeof J4_CANNOT)[number]["id"];
+// THE BOUNDARY LIST IS DATA AND LIVES IN ./boundaries (2026-09-14).
+//
+// Re-exported here so every existing import keeps working. It moved because
+// this module reaches for the live tool catalogue and can therefore never be
+// imported by anything the browser loads — and the Office now needs the same
+// list to decide what an observation requires. See ./boundaries for the whole
+// reason, and for the fifth boundary the evidence added.
+export { J4_CANNOT, type Boundary, type BoundaryId } from "./boundaries";
 
 /** A real business need, and what it would take to meet it. */
 export interface BusinessNeed {

@@ -151,7 +151,19 @@ check("the detector CAN see a contradiction",
 
 // ---- the boundaries are claims somebody made -----------------------------
 console.log("\n=== every boundary states its reason ===\n");
-check("four boundaries, closed list", J4_CANNOT.length === 4, J4_CANNOT.map((b) => b.id).join(", "));
+// FIVE SINCE 2026-09-14, and this number is meant to be argued with — the
+// guard exists so that adding a boundary is a decision somebody makes rather
+// than a default anything falls into, and it caught the fifth being added.
+//
+// The fifth is know_information_only_the_owner_holds, and the evidence is on
+// the record: the natural cron produced two real commerce:orders_shipped_
+// untracked observations, both orders read from production with carrier,
+// labelClaimedAt and shippingCostInCents all NULL — no label was ever bought
+// through Genesis, so the tracking number exists only with the owner and the
+// carrier. attachTracking TAKES a number as input; J4 can apply one and cannot
+// discover one. `missing: "information"` had been in the Office's vocabulary
+// since it was written and no boundary had ever claimed it.
+check("five boundaries, closed list", J4_CANNOT.length === 5, J4_CANNOT.map((b) => b.id).join(", "));
 check("each names which kind of thing is missing",
   J4_CANNOT.every((b) => ["information", "decision", "permission", "capability"].includes(b.missing)));
 check("each gives a real reason, not an apology",

@@ -143,7 +143,12 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       declaredRead("presentation", "outstanding observations are working state, not business facts", () =>
         prisma.genesisObservation.findMany({
           where: { storeId: store.id, status: "ACTIVE" },
-          select: { id: true, genesisState: true, summary: true, actionHref: true, firstNoticedAt: true },
+          // dedupeKey is selected so the Office can ask what the observation
+          // NEEDS, not just where it points — see lib/j4/observationNeeds.ts.
+          select: {
+            id: true, genesisState: true, summary: true, actionHref: true,
+            dedupeKey: true, firstNoticedAt: true,
+          },
           orderBy: { firstNoticedAt: "desc" },
         }),
       ),
