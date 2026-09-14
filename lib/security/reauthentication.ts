@@ -143,3 +143,31 @@ export async function clearConfirmation(userId: string): Promise<void> {
     data: { reauthenticatedAt: null },
   });
 }
+
+/**
+ * Can this account confirm a password at all?
+ *
+ * ============ AN ACCOUNT THAT SIGNS IN WITH GOOGLE CANNOT (2026-09-13) ==
+ *
+ * User.password is nullable and a Google-only account has none — the
+ * credentials provider guards `!user.password` for exactly that reason, and
+ * confirmPassword above already answers such an account with `no_password`.
+ *
+ * What was missing was anywhere to ASK before offering the attempt. The
+ * security page led with a password form, told the owner "Confirm your
+ * password above to change this" beneath the two-factor switch, and described
+ * the risk as "Anyone with your password can sign in to your business" — three
+ * statements about a password that does not exist, and a confirmation gate
+ * that can never open, which makes Genesis-side two-factor permanently
+ * unreachable for those accounts while looking available.
+ *
+ * This does not change who may do what. It is the read that lets the surface
+ * stop asking for something that cannot be given.
+ */
+export async function hasConfirmablePassword(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { password: true },
+  });
+  return Boolean(user?.password);
+}

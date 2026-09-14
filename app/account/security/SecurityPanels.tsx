@@ -52,10 +52,12 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
 export function TwoFactorPanel({
   enabled,
   confirmed,
+  hasPassword,
   recoveryCodesRemaining,
 }: {
   enabled: boolean;
   confirmed: boolean;
+  hasPassword: boolean;
   recoveryCodesRemaining: number;
 }) {
   const [pending, start] = useTransition();
@@ -79,19 +81,28 @@ export function TwoFactorPanel({
         <div>
           <h2 className="text-base font-semibold text-black dark:text-zinc-50">Two-factor authentication</h2>
           <p className="mt-1 max-w-prose text-sm text-zinc-600 dark:text-zinc-400">
+            {/* THE RISK SENTENCE HAS TO BE TRUE OF THIS ACCOUNT (2026-09-13).
+                "Anyone with your password can sign in" was told to owners who
+                have no password — a Google-only account signs in through
+                Google, and there is no Genesis password for anyone to hold. */}
             {enabled
               ? "On. Signing in needs a code from your authenticator app as well as your password."
-              : "Off. Anyone with your password can sign in to your business."}
+              : hasPassword
+                ? "Off. Anyone with your password can sign in to your business."
+                : "Not available. Turning this on needs a Genesis password to confirm first, and this account signs in with Google."}
           </p>
         </div>
         <span
+          data-testid="two-factor-state"
           className={`rounded-full px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${
             enabled
               ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-              : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+              : hasPassword
+                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                : "bg-black/[.05] text-zinc-600 dark:bg-white/[.06] dark:text-zinc-400"
           }`}
         >
-          {enabled ? "On" : "Off"}
+          {enabled ? "On" : hasPassword ? "Off" : "Unavailable"}
         </span>
       </div>
 
@@ -107,7 +118,9 @@ export function TwoFactorPanel({
         </p>
       )}
 
-      {!confirmed && (
+      {/* AND THE INSTRUCTION HAS TO BE FOLLOWABLE. "Confirm your password
+          above" pointed at a form that could never succeed for these accounts. */}
+      {!confirmed && hasPassword && (
         <p className="mt-4 text-sm text-zinc-500">Confirm your password above to change this.</p>
       )}
 
@@ -187,9 +200,37 @@ export function TwoFactorPanel({
   );
 }
 
-export function ConfirmPanel({ confirmed }: { confirmed: boolean }) {
+export function ConfirmPanel({
+  confirmed,
+  hasPassword,
+}: {
+  confirmed: boolean;
+  hasPassword: boolean;
+}) {
   const [pending, start] = useTransition();
   const [error, setError] = useState("");
+
+  // ============ NOTHING TO CONFIRM (2026-09-13) =======================
+  //
+  // A Google-only account has no password — User.password is nullable and the
+  // credentials provider guards `!user.password` for that reason. This panel
+  // offered it a form anyway, and the owner learned there was nothing to type
+  // only by typing something and being told so. Said up front now, because a
+  // gate that cannot open should not look like one that is merely closed.
+  if (!hasPassword) {
+    return (
+      <section className={CARD} data-testid="confirm-panel">
+        <h2 className="text-base font-semibold text-black dark:text-zinc-50">
+          You sign in with Google
+        </h2>
+        <p className="mt-1 max-w-prose text-sm text-zinc-600 dark:text-zinc-400">
+          There&apos;s no Genesis password on this account, so there&apos;s nothing to confirm here.
+          Your sign-in is protected by Google, and the security settings below that need a password
+          confirmation aren&apos;t available.
+        </p>
+      </section>
+    );
+  }
 
   if (confirmed) {
     return (

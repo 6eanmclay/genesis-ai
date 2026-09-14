@@ -4,7 +4,7 @@ import { auth } from "@/auth";
 import { getSecurityHistory } from "@/lib/security/events";
 import { listSessions } from "@/lib/security/sessions";
 import { isTwoFactorEnabled, countUnusedRecoveryCodes } from "@/lib/security/twoFactor";
-import { hasFreshConfirmation } from "@/lib/security/reauthentication";
+import { hasFreshConfirmation, hasConfirmablePassword } from "@/lib/security/reauthentication";
 import { ConfirmPanel, TwoFactorPanel, SessionsPanel, HistoryPanel } from "./SecurityPanels";
 
 // ACCOUNT SECURITY — the one home for everything this milestone built.
@@ -27,9 +27,14 @@ export default async function AccountSecurityPage() {
   const currentSessionInstanceId =
     (session.user as { sessionInstanceId?: string }).sessionInstanceId ?? null;
 
-  const [enabled, confirmed, recoveryCodesRemaining, sessions, history] = await Promise.all([
+  // WHETHER THERE IS A PASSWORD TO CONFIRM AT ALL (2026-09-13). A Google-only
+  // account has none, so the confirmation gate below can never open for it —
+  // and every panel that asks for one was asking for something that does not
+  // exist. Read here rather than discovered by a failed attempt.
+  const [enabled, confirmed, hasPassword, recoveryCodesRemaining, sessions, history] = await Promise.all([
     isTwoFactorEnabled(userId),
     hasFreshConfirmation(userId),
+    hasConfirmablePassword(userId),
     countUnusedRecoveryCodes(userId),
     listSessions(userId, currentSessionInstanceId),
     getSecurityHistory(userId, 25),
@@ -49,10 +54,11 @@ export default async function AccountSecurityPage() {
           </p>
         </div>
 
-        <ConfirmPanel confirmed={confirmed} />
+        <ConfirmPanel confirmed={confirmed} hasPassword={hasPassword} />
         <TwoFactorPanel
           enabled={enabled}
           confirmed={confirmed}
+          hasPassword={hasPassword}
           recoveryCodesRemaining={recoveryCodesRemaining}
         />
         <SessionsPanel available={sessions.available} sessions={sessions.sessions} />
