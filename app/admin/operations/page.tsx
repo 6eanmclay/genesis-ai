@@ -161,7 +161,22 @@ export default async function OperationsPage({
             </thead>
             <tbody>
               {health.scheduler.map((task) => {
-                const late = task.overdueByMs !== null || !!task.stuckSince || task.lastOutcome === "failed";
+                // ============ OFF IS NOT LATE (2026-09-14) =================
+                //
+                // This read the three alarm conditions and not `enabled`, so a
+                // task that failed and was THEN switched off — which is exactly
+                // why you switch one off — rendered rose-700 beside its own
+                // text saying "off by decision", under a green banner reading
+                // "Nothing needs attention".
+                //
+                // schedulerNeedsAttention already guards the identical
+                // predicate — `t.enabled && t.lastOutcome === "failed"` — so the
+                // banner was right and only the colour disagreed. The rule is
+                // the one stated three lines below: a task that is off is not a
+                // problem, and red has to keep meaning something.
+                const late =
+                  task.enabled &&
+                  (task.overdueByMs !== null || !!task.stuckSince || task.lastOutcome === "failed");
                 return (
                   <tr key={task.key} className="border-t border-black/[.06] dark:border-white/[.08]">
                     <td className="p-3 text-black dark:text-zinc-100" title={task.purpose}>{task.key}</td>
