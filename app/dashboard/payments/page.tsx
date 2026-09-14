@@ -131,27 +131,52 @@ export async function PaymentsScreen({
     orderBy: { createdAt: "desc" },
   });
 
-  const stripeStatusDisplay = latestStripeLog
+  // ============ THE ROW IS THE STATE; THE LOG IS HISTORY (2026-09-13) ===
+  //
+  // This read the most recent CONNECT/VERIFY ExecutionLog and fell back to the
+  // integration row only when no log existed — which, since connecting always
+  // writes one, is never for a connected store. So a historical event was
+  // describing the present, and two things followed.
+  //
+  // IT CONTRADICTED THE BADGE BESIDE IT. Rendered with status NEEDS_ATTENTION
+  // and an older successful verify, the card read "Needs attention", "This
+  // store can't take payments through Stripe right now", and "Stripe verified ·
+  // verified" at once — the exact two-contradictory-answers failure
+  // lib/integrations/paymentBadge.ts was extracted from this JSX to end,
+  // walking back in through the line underneath it.
+  //
+  // AND IT HID lastError. Stripe's verify sets CONNECTED when charges_enabled
+  // is true while recording, in lastError, that payouts to the owner's bank are
+  // not enabled — "money will sit in Stripe until its requirements are met".
+  // Its own comment says an owner selling into a blocked payout "is exactly the
+  // sort of thing a business partner should say out loud". Rendered, a healthy
+  // account and a payouts-blocked one were byte-identical: "✓ Connected ·
+  // Stripe verified · verified". Stripe is not in CONNECTOR_CATALOG either, so
+  // Connections could not show it, and isBrokenConnection is false for
+  // CONNECTED, so no observation carried it. It reached the owner nowhere.
+  //
+  // The date comes from the row too, because this line describes the CURRENT
+  // state and lastVerifiedAt is when that state was last established. The log
+  // keeps the two jobs that are genuinely historical — the post-redirect flash,
+  // and "Last attempt failed", which is gated on NOT being connected and so can
+  // never speak over a live connection.
+  //
+  // `status` is gone rather than moved: it was computed on both display objects
+  // and read by neither.
+  // AND "verified" HAD TO MOVE WITH IT. It read `lastVerifiedAt !== null`,
+  // which is not a claim about health: stripe.ts stamps lastVerifiedAt on the
+  // FAILURE path too, so it only ever meant "a check has been run". Rendered
+  // beside a Needs-attention badge it produced "Charges are not yet enabled on
+  // this Stripe account · verified" — the same contradiction as the message,
+  // one field along. It now comes from the one rule that decides whether this
+  // store can take money, so the badge and the line cannot disagree.
+  const stripeStatusDisplay = stripeIntegration
     ? {
-        status: latestStripeLog.status,
-        message: latestStripeLog.message,
-        verified: latestStripeLog.verified,
-        createdAt: latestStripeLog.createdAt,
+        message: stripeIntegration.lastError ?? "Stripe connected",
+        verified: paymentBadgeFor(stripeIntegration.status).kind === "connected",
+        at: stripeIntegration.lastVerifiedAt ?? stripeIntegration.connectedAt ?? stripeIntegration.createdAt,
       }
-    : stripeIntegration
-      ? {
-          status:
-            stripeIntegration.status === "CONNECTED"
-              ? "SUCCESS"
-              : stripeIntegration.status === "NEEDS_ATTENTION"
-                ? "WARNING"
-                : "FAILED",
-          message: stripeIntegration.lastError ?? "Stripe connected",
-          verified: stripeIntegration.lastVerifiedAt !== null,
-          createdAt:
-            stripeIntegration.lastVerifiedAt ?? stripeIntegration.connectedAt ?? stripeIntegration.createdAt,
-        }
-      : null;
+    : null;
 
   // Best-effort — a decrypt failure (e.g. a pre-encryption-era row, or a
   // rotated INTEGRATION_ENCRYPTION_KEY) should never break the page, just
@@ -186,27 +211,15 @@ export async function PaymentsScreen({
           ?.fields ?? null)
       : null;
 
-  const paypalStatusDisplay = latestPaypalLog
+  // The same correction, and it has to be the same: two cards deciding
+  // separately what "current" means is how the first contradiction got in.
+  const paypalStatusDisplay = paypalIntegration
     ? {
-        status: latestPaypalLog.status,
-        message: latestPaypalLog.message,
-        verified: latestPaypalLog.verified,
-        createdAt: latestPaypalLog.createdAt,
+        message: paypalIntegration.lastError ?? "PayPal connected",
+        verified: paymentBadgeFor(paypalIntegration.status).kind === "connected",
+        at: paypalIntegration.lastVerifiedAt ?? paypalIntegration.connectedAt ?? paypalIntegration.createdAt,
       }
-    : paypalIntegration
-      ? {
-          status:
-            paypalIntegration.status === "CONNECTED"
-              ? "SUCCESS"
-              : paypalIntegration.status === "NEEDS_ATTENTION"
-                ? "WARNING"
-                : "FAILED",
-          message: paypalIntegration.lastError ?? "PayPal connected",
-          verified: paypalIntegration.lastVerifiedAt !== null,
-          createdAt:
-            paypalIntegration.lastVerifiedAt ?? paypalIntegration.connectedAt ?? paypalIntegration.createdAt,
-        }
-      : null;
+    : null;
 
   const flashProvider =
     integrationError === "stripe" || integrationConnected === "stripe"
@@ -340,9 +353,9 @@ export async function PaymentsScreen({
             </p>
           )}
           {stripeStatusDisplay && stripeConnected && (
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-zinc-500" data-testid="stripe-status">
               {stripeStatusDisplay.message}
-              {stripeStatusDisplay.verified ? " · verified" : ""} · {stripeStatusDisplay.createdAt.toLocaleDateString()}
+              {stripeStatusDisplay.verified ? " · verified" : ""} · {stripeStatusDisplay.at.toLocaleDateString()}
             </p>
           )}
           {stripeIntegration?.connectedBy && stripeIntegration.connectedAt && (
@@ -438,7 +451,7 @@ export async function PaymentsScreen({
               {paypalStatusDisplay && (
                 <p className="text-xs text-zinc-500">
                   {paypalStatusDisplay.message}
-                  {paypalStatusDisplay.verified ? " · verified" : ""} · {paypalStatusDisplay.createdAt.toLocaleDateString()}
+                  {paypalStatusDisplay.verified ? " · verified" : ""} · {paypalStatusDisplay.at.toLocaleDateString()}
                 </p>
               )}
               {paypalIntegration?.connectedBy && paypalIntegration.connectedAt && (
