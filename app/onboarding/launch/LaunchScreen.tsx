@@ -103,6 +103,35 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
     };
   }, [beat]);
 
+  // ============ A REFUSAL IS NOT AN ACCIDENT (2026-09-14) ============
+  //
+  // publishStoreExecutable refuses to publish a store with no payment provider,
+  // and it says why in a sentence written for the owner: "Connect Stripe or
+  // PayPal before publishing — customers won't be able to check out otherwise."
+  // launchGoLive rethrows it verbatim, on purpose.
+  //
+  // This screen threw it away and substituted "Something went wrong going live
+  // — try again." Rendered, an owner whose connection had gone between the page
+  // load and the button press read:
+  //
+  //   Everything's ready. … Payments are connected.
+  //   Something went wrong going live — try again.
+  //
+  // — a stale claim and an instruction that cannot work, because the refusal is
+  // structural and every retry fails identically. The other route to the same
+  // executable already answers this correctly: /website renders "Couldn't
+  // publish your store." above the log row's own message.
+  //
+  // Same rule the Creation Station wrote down: "the generic sentence that hides
+  // which of five things went wrong is worse than the ugly one that names it."
+  // Copied rather than imported, as this screen's own actions file does with
+  // logConnectAttempt — "each server-actions file in this codebase stays
+  // self-contained rather than reaching into another one's internals."
+  function said(error: unknown, fallback: string): string {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return message ? `${fallback} ${message}` : fallback;
+  }
+
   // Beat: publishing — real work (publishStoreExecutable).
   useEffect(() => {
     if (beat !== "publishing") return;
@@ -115,10 +144,13 @@ export function LaunchScreen({ data }: { data: LaunchData }) {
         setGenesisWorking(false);
         setStoreUrl(url);
         setBeat("live");
-      } catch {
+      } catch (error) {
         if (cancelled) return;
         setGenesisWorking(false);
-        setError("Something went wrong going live — try again.");
+        // NO "TRY AGAIN". The reason says whether trying again is the thing to
+        // do; a blanket instruction to repeat a structurally refused action is
+        // the one sentence that is always wrong here.
+        setError(said(error, "We couldn't take your store live."));
         setBeat("ready");
       }
     })();
