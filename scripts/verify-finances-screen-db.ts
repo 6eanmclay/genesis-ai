@@ -55,7 +55,12 @@ function payout(over: Partial<PayoutRecord> = {}): PayoutRecord {
 }
 
 let seq = 0;
-async function makeStore(stamp: number, connect: "STRIPE" | "PAYPAL" | null) {
+async function makeStore(
+  stamp: number,
+  connect: "STRIPE" | "PAYPAL" | null,
+  /** The rail's own status. A connection can exist and not be working. */
+  status: "CONNECTED" | "NEEDS_ATTENTION" | "FAILED" = "CONNECTED",
+) {
   const n = ++seq;
   const user = await prisma.user.create({ data: { email: `fs-${stamp}-${n}@example.test` } });
   const store = await prisma.store.create({
@@ -63,7 +68,7 @@ async function makeStore(stamp: number, connect: "STRIPE" | "PAYPAL" | null) {
   });
   if (connect) {
     await prismaSystem.storeIntegration.create({
-      data: { storeId: store.id, provider: connect, status: "CONNECTED", externalAccountId: `acct_${n}` },
+      data: { storeId: store.id, provider: connect, status, externalAccountId: `acct_${n}` },
     });
   }
   return store;
@@ -155,7 +160,7 @@ async function main(): Promise<void> {
 
   console.log("\n--- the states a real merchant will actually hit ---\n");
   {
-    // ============ ALL THREE ARE REACHABLE WITHOUT A DOUBLE =====
+    // ============ ALL FOUR ARE REACHABLE WITHOUT A DOUBLE ======
     const none = await makeStore(stamp, null);
     const notConnected = await financialsForStore(none.id);
     eq("no provider connected", notConnected.available, false);
@@ -185,6 +190,38 @@ async function main(): Promise<void> {
       assert("which says the figures are missing rather than zero",
         /missing rather than zero/.test(said), said);
     }
+
+    // ============ CONNECTED AND NOT WORKING (2026-09-13) =======
+    //
+    // The query behind this asked for status CONNECTED alone, so a store whose
+    // Stripe sat at NEEDS_ATTENTION matched nothing and fell through to
+    // "not connected" — Money said no payment provider was connected and
+    // offered to connect one, while Payments said that same row needed
+    // attention and offered to reconnect it. Two screens, one integration row,
+    // opposite answers.
+    for (const status of ["NEEDS_ATTENTION", "FAILED"] as const) {
+      const unhealthy = await makeStore(stamp, "STRIPE", status);
+      const result = await financialsForStore(unhealthy.id);
+      eq(`a Stripe at ${status} is a broken connection, not an absent one`,
+        result.available === false ? result.reason : "", "connection_broken");
+      if (!result.available) {
+        const said = unavailableSentence(result.reason, result.detail);
+        assert(`  and ${status} does not claim nothing is connected`,
+          !/No payment provider is connected/.test(said), said);
+        assert("  it names the rail that exists", /STRIPE/.test(said), said);
+        assert("  and never implies zero money", !/\$0|zero/i.test(said), said);
+      }
+    }
+
+    // A DELIBERATE DISCONNECT IS STILL AN ABSENCE. The new branch must not
+    // swallow the case it was carved out of.
+    const removed = await makeStore(stamp, "STRIPE");
+    await prismaSystem.storeIntegration.updateMany({
+      where: { storeId: removed.id }, data: { status: "DISCONNECTED" },
+    });
+    const gone = await financialsForStore(removed.id);
+    eq("a disconnected rail is still 'not connected'",
+      gone.available === false ? gone.reason : "", "not_connected");
   }
 
   console.log("\n--- management is handed to Stripe, not recreated ---\n");

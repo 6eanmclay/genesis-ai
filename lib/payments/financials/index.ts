@@ -49,12 +49,21 @@ export async function financialsForStore(
 
   // The rails a business could have money at, in the order they are asked.
   // Only providers with a registered implementation can answer at all.
-  const integrations = await prisma.storeIntegration.findMany({
-    where: { storeId, provider: { in: ["STRIPE", "PAYPAL"] }, status: "CONNECTED" },
-    select: { provider: true },
+  // EVERY RAIL THAT EXISTS, not only the working ones (2026-09-13).
+  //
+  // This asked for status CONNECTED alone, so a store whose Stripe was at
+  // NEEDS_ATTENTION or FAILED matched nothing and fell all the way through to
+  // "not connected" — Money told the merchant no payment provider was
+  // connected, and offered to connect one, while Payments told them that very
+  // connection needed attention and offered to reconnect it. The row says a
+  // connection exists; it is broken, which is a different thing from absent.
+  const rails = await prisma.storeIntegration.findMany({
+    where: { storeId, provider: { in: ["STRIPE", "PAYPAL"] }, status: { not: "DISCONNECTED" } },
+    select: { provider: true, status: true },
   });
+  const working = rails.filter((r) => r.status === "CONNECTED");
 
-  for (const { provider } of integrations) {
+  for (const { provider } of working) {
     const implementation = financialsProviderFor(provider);
     if (implementation) return implementation.financialsFor(storeId, options);
   }
@@ -64,13 +73,24 @@ export async function financialsForStore(
   // A business with PayPal connected and no Stripe has a real payment rail and
   // real money; Genesis simply cannot read a PayPal payout today. Saying "not
   // connected" would be false, and an empty balance would read as zero.
-  if (integrations.length > 0) {
+  if (working.length > 0) {
     return {
       available: false,
       reason: "unsupported",
       detail:
-        `This business takes payments through ${integrations.map((i) => i.provider).join(", ")}, ` +
+        `This business takes payments through ${working.map((i) => i.provider).join(", ")}, ` +
         "and Genesis cannot read payout information from there yet.",
+    };
+  }
+
+  // CONNECTED BUT NOT WORKING. Named rather than blanked, for the same reason
+  // `unsupported` is: there is real money at a real rail, and saying nothing is
+  // connected would send the merchant to set up a provider they already have.
+  if (rails.length > 0) {
+    return {
+      available: false,
+      reason: "connection_broken",
+      detail: `This business's ${rails.map((r) => r.provider).join(", ")} connection is not working right now.`,
     };
   }
 

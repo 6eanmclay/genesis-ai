@@ -128,10 +128,19 @@ export const MONEY_DISTINCTION =
   "What a customer paid is not what Stripe holds, and what Stripe holds is not what has reached your bank.";
 
 /** What to say when there is nothing to show, and why. */
-export function unavailableSentence(reason: "not_connected" | "provider_error" | "unsupported", detail: string): string {
+export function unavailableSentence(
+  reason: "not_connected" | "connection_broken" | "provider_error" | "unsupported",
+  detail: string,
+): string {
   switch (reason) {
     case "not_connected":
       return "No payment provider is connected to this business yet, so there is nothing to show.";
+    // CONNECTED AND NOT WORKING. Deliberately not the sentence above: telling a
+    // merchant whose Stripe is failing that nothing is connected sends them to
+    // set up a provider they already have, and contradicts what Payments says
+    // about the same row.
+    case "connection_broken":
+      return `${detail} Until it is, Genesis cannot read what Stripe is holding or what has been paid out.`;
     case "unsupported":
       // Named rather than blanked: this business has real money somewhere
       // Genesis cannot read, and an empty screen would read as zero.

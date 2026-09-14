@@ -84,7 +84,11 @@ export async function Finances({ store, basePath }: FinancesProps) {
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             {unavailableSentence(financials.reason, financials.detail)}
           </p>
-          {financials.reason === "not_connected" && (
+          {/* THE RIGHT DOOR, WITH THE RIGHT WORDS. A broken connection needs
+              fixing, not connecting — offering "Connect a payment provider" to
+              a merchant who already has one is how Money came to contradict
+              Payments about the same integration row. */}
+          {(financials.reason === "not_connected" || financials.reason === "connection_broken") && (
             <a
               // Rebased, not hard-coded. This said "/dashboard/payments",
               // so a merchant on /b/<slug>/finances was thrown to the legacy
@@ -93,7 +97,9 @@ export async function Finances({ store, basePath }: FinancesProps) {
               href={`${basePath}/payments`}
               className="mt-3 inline-block rounded-full bg-[#2563eb] px-3.5 py-1.5 text-xs font-medium text-white"
             >
-              Connect a payment provider
+              {financials.reason === "connection_broken"
+                ? "Fix your payment connection"
+                : "Connect a payment provider"}
             </a>
           )}
         </div>

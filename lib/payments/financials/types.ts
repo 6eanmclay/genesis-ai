@@ -162,8 +162,21 @@ export interface FeeSummary {
 /** What a provider could not answer, and why. Never silently omitted. */
 export interface FinancialsUnavailable {
   available: false;
-  /** connected | not_connected | provider_error | unsupported */
-  reason: "not_connected" | "provider_error" | "unsupported";
+  /**
+   * not_connected      no payment rail has ever been connected, or all were
+   *                    deliberately disconnected.
+   * connection_broken  a rail IS connected and is not currently working, so
+   *                    there are figures somewhere that Genesis cannot read
+   *                    until it is fixed. Added 2026-09-13: this used to fall
+   *                    through to not_connected, and Money told a merchant with
+   *                    a failing Stripe that nothing was connected while
+   *                    Payments told them the same connection needed attention.
+   * provider_error     the rail is connected and working, and the provider
+   *                    could not be reached just now.
+   * unsupported        the rail is connected and Genesis cannot read money from
+   *                    that provider at all yet.
+   */
+  reason: "not_connected" | "connection_broken" | "provider_error" | "unsupported";
   detail: string;
 }
 
