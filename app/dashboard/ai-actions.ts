@@ -2213,6 +2213,9 @@ async function applyGenesisMessageToStore(
     activeProductNames,
     workspacePath: returnTo,
     pendingSummary: pending?.summary ?? null,
+    // This path has no conversation of its own — it is the ungrouped history,
+    // which is the bucket startTaskConversation writes a seed turn into.
+    conversationId: null,
   });
   const { understanding } = turn;
   const unifiedContextParts = turn.parts;

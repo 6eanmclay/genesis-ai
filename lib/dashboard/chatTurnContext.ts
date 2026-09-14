@@ -6,6 +6,7 @@ import { describeSelectionForJ4, resolveSelection, type SelectionContext } from 
 import { mapForStore } from "@/lib/businessModel/mapForStore";
 import { getOpenProposal } from "@/lib/storefront/proposals";
 import { resolveMostRecentPendingApprovalBatch } from "@/lib/dashboard/pendingApprovals";
+import { relevantTaskFor, describeRelevantTask } from "@/lib/j4/relevantTask";
 
 // WHAT J4 IS TOLD BEFORE IT DECIDES — ASSEMBLED ONCE (2026-08-22, Unified
 // Intelligence UI4).
@@ -57,6 +58,17 @@ export interface TurnContextInput {
   selectedNodeIds?: unknown;
   /** The lighter, non-ApprovalRequest confirmation loop edit_store_content uses. */
   pendingSummary?: string | null;
+  /**
+   * WHICH THREAD THIS TURN JOINS, so unfinished work can be found.
+   *
+   * Null means the ungrouped history and is matched AS null — the same scoping
+   * the chat route's own message read uses, because "every message in this
+   * business" would pull another conversation's task into this one.
+   *
+   * Optional because the server-action path does not carry one; absent behaves
+   * exactly as null, which is that path's real bucket anyway.
+   */
+  conversationId?: string | null;
 }
 
 export interface TurnContext {
@@ -118,6 +130,24 @@ export async function buildTurnContext(input: TurnContextInput): Promise<TurnCon
 
   const selectionLine = describeSelectionForJ4(selection);
   if (selectionLine) parts.push(selectionLine);
+
+  // ============ THE WORK ALREADY UNDER WAY (2026-09-14) ==============
+  //
+  // Read from the Task row, not from the transcript. The seed turn
+  // startTaskConversation writes is an ordinary message, so past the 50-message
+  // window it fell out of the prompt and J4 silently stopped knowing what the
+  // owner was working toward — while the row still said IN_PROGRESS.
+  //
+  // ONE TASK OR NONE, never a list. relevantTaskFor returns null unless the
+  // conversation or the thread names exactly one unfinished task; ambiguity and
+  // absence both mean J4 says nothing about unfinished work. Recency is never
+  // proof — see that module for why there is no "most recent" fallback.
+  const relevantTask = await relevantTaskFor({
+    storeId: input.storeId,
+    conversationId: input.conversationId ?? null,
+  });
+  const taskLine = describeRelevantTask(relevantTask);
+  if (taskLine) parts.push(taskLine);
 
   // THE PROPOSAL CURRENTLY ON THE TABLE — the line the Server Action was
   // missing. Without it, "I don't like that, keep it handmade" reads as a brand

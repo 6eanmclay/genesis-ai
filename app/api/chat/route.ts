@@ -418,6 +418,9 @@ export async function POST(request: Request) {
           activeProductNames,
           workspacePath: body?.workspacePath,
           pendingSummary: pending?.summary ?? null,
+          // The same bucket the history read above uses, so unfinished work is
+          // found in the thread this turn actually joins.
+          conversationId,
         });
         const { understanding } = turn;
         const unifiedContextParts = turn.parts;
