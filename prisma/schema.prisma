@@ -334,6 +334,25 @@ model Store {
   userId                       String
   name                         String
   slug                         String    @unique
+  /// WHICH DRAFT/LAUNCH PRODUCED THIS STORE (2026-09-14).
+  ///
+  /// The idempotency key for confirmStoreDraftCore. Measured before it existed:
+  /// the Launch screen retries its building beat WITHOUT reloading, so a
+  /// partial failure that left the draft on file produced a second Store on
+  /// every press — three presses, three stores, each one making the next worse
+  /// because activeStoreId stayed NULL and resolveUserStore then refuses to
+  /// guess, so the page keeps offering to create another.
+  ///
+  /// DELIBERATELY NOT A FOREIGN KEY. The draft is deleted as the last step of a
+  /// successful confirmation, and this has to outlive it — a relation would
+  /// either block that delete or null this out, and either way the record of
+  /// which launch made this store would be gone exactly when it is needed.
+  ///
+  /// UNIQUE, so the database refuses the second one rather than the code
+  /// remembering to check — the same discipline as Product_one_per_design.
+  /// NULLs are distinct in Postgres, so every store made another way, and every
+  /// store that already existed, is unconstrained.
+  createdFromDraftId           String?   @unique
   description                  String?
   tagline                      String?
   logoUrl                      String?

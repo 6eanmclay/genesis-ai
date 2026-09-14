@@ -4146,6 +4146,46 @@ export async function restoreStoreDraftVersion(generationId: string) {
 // (its slug) rather than a forced navigation. redirect()'s special throw is
 // only meaningful in a true Server Action; each caller handles "what
 // happens next" itself.
+/**
+ * Finish a confirmation whose structural half did not complete.
+ *
+ * ============ THE SAME FOUR WRITES, WITHOUT THE CREATE (2026-09-14) ====
+ *
+ * Reached when a draft already has a Store carrying its id — a retry of a
+ * launch that got as far as creating the store and no further. Every statement
+ * is written to be safe to repeat: the promotions match nothing once promoted,
+ * deleteMany rather than delete so an already-consumed draft is not an error,
+ * and pointing the account at a store it is already pointed at is a no-op.
+ *
+ * In one transaction for the same reason the creation path is: these four
+ * either all describe a finished business or none of them do.
+ */
+async function finishInterruptedConfirmation(params: {
+  storeId: string;
+  draftId: string;
+  draftVersion: number;
+  userId: string;
+}): Promise<void> {
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.storeGeneration.updateMany({
+        where: { storeDraftId: params.draftId },
+        data: { storeId: params.storeId, storeDraftId: null },
+      });
+      await tx.storeGeneration.updateMany({
+        where: { storeId: params.storeId, version: params.draftVersion, milestone: null },
+        data: { milestone: "first_refined" },
+      });
+      await tx.storeDraft.deleteMany({ where: { id: params.draftId } });
+      await tx.user.update({
+        where: { id: params.userId },
+        data: { activeStoreId: params.storeId },
+      });
+    },
+    { timeout: 30_000 },
+  );
+}
+
 export async function confirmStoreDraftCore(
   userId: string,
   opts: { logoUrl?: string | null; sessionInstanceId?: string } = {}
@@ -4173,6 +4213,37 @@ export async function confirmStoreDraftCore(
   });
   if (!draft) {
     throw new Error("confirmStoreDraftCore: no StoreDraft found for this user");
+  }
+
+  // ============ ONE STORE PER DRAFT, RESUMED NOT REPEATED (2026-09-14) ===
+  //
+  // Measured: the Launch screen retries its building beat WITHOUT reloading,
+  // so a partial failure that left the draft on file produced a second Store
+  // on every press — three presses, three stores. The /dashboard route never
+  // showed it, because that page renders its Confirm button only under
+  // `if (!store)` and so re-derives the guard on every load; the client retry
+  // has no such moment.
+  //
+  // NOT "does this user have a store" — an account may legitimately already
+  // have one, and creating a second business is a supported act. The question
+  // is whether THIS DRAFT already produced one, which is why the store carries
+  // the draft's id rather than this function carrying a heuristic.
+  //
+  // Resuming finishes the structural half only. Anything non-fatal that
+  // already ran on the first attempt — owner facts, the brand claims, the
+  // supplier registration — ran before the writes below could fail, so redoing
+  // them here would duplicate records rather than repair them.
+  const alreadyMade = await prisma.store.findUnique({
+    where: { createdFromDraftId: draft.id },
+  });
+  if (alreadyMade) {
+    await finishInterruptedConfirmation({
+      storeId: alreadyMade.id,
+      draftId: draft.id,
+      draftVersion: draft.version,
+      userId,
+    });
+    return { store: alreadyMade };
   }
 
   const theme = (draft.theme as ThemeWithComposition | null) ?? FALLBACK_THEME;
@@ -4313,101 +4384,182 @@ export async function confirmStoreDraftCore(
       }
     : draftBlueprint;
 
-  const store = await prisma.store.create({
-    data: {
+  // ============ ONE TRANSACTION, FIVE STRUCTURAL WRITES (2026-09-14) ====
+  //
+  // Measured before this existed: a failure at any of these left the store
+  // created and the rest undone — generations stranded on a deleted-or-not
+  // draft, and activeStoreId NULL. That last one compounds, because with two
+  // or more stores and no active one resolveUserStore refuses to guess, so the
+  // launch page reads "no store yet" and offers to make another.
+  //
+  // Only the LOCAL structural writes are in here. The external side effects
+  // below — Printful registration, blob-backed asset records, owner facts —
+  // stay outside and stay non-fatal, because they cannot be rolled back and
+  // because the file already decided that losing one must not undo a launch.
+  let store: Awaited<ReturnType<typeof prisma.store.create>>;
+  try {
+    store = await prisma.$transaction(async (tx) => {
+      const created = await tx.store.create({
+        data: {
+          userId,
+          // WHICH LAUNCH MADE THIS. The idempotency key — unique, so a second
+          // confirmation of this draft is refused by the database rather than
+          // by remembering to check. See the column's own note in schema.prisma.
+          createdFromDraftId: draft.id,
+          name: storeName,
+          slug,
+          description: storeDescription,
+          tagline: draft.tagline,
+          logoUrl: opts.logoUrl ?? creativeDirection?.logoUrl ?? null,
+          theme,
+          blueprint: (blueprintWithHero as object | null) ?? Prisma.DbNull,
+          version: draft.version,
+          businessCategories: draft.businessCategories,
+          revenueStreams: draft.revenueStreams,
+          brandPositioning: draft.brandPositioning,
+          creativeDirection: (creativeDirection as object | null) ?? Prisma.DbNull,
+          products: fulfillmentSelection
+            ? {
+                // The guided flow's one real, priced, fulfillment-backed
+                // product — externalProductId is filled in just below, once
+                // this real Store (and therefore a real storeId to register
+                // the product under) exists.
+                create: [
+                  {
+                    name: creativeDirection?.name ?? fulfillmentSelection.candidate.name,
+                    description: creativeDirection?.description ?? fulfillmentSelection.candidate.description,
+                    priceInCents: fulfillmentSelection.pricing.retailPriceInCents,
+                    position: 0,
+                    imageUrl: creativeDirection?.productImageUrl ?? fulfillmentSelection.candidate.imageUrl,
+                    costInCents:
+                      fulfillmentSelection.pricing.retailPriceInCents - fulfillmentSelection.pricing.profitInCents,
+                    fulfillmentProvider: fulfillmentSelection.candidate.provider,
+                    externalVariantId: fulfillmentSelection.candidate.variant.externalVariantId,
+                  },
+                ],
+              }
+            : selfFulfilledSelection
+              ? {
+                  // Self-fulfillment (2026-08-06) — the owner ships this
+                  // themselves, so there's no external provider/variant to
+                  // record; fulfillmentProvider/externalVariantId stay null,
+                  // the exact same shape a manually-created dashboard product
+                  // already has (app/dashboard/actions.ts's createProduct).
+                  create: [
+                    {
+                      name: creativeDirection!.name,
+                      description: creativeDirection!.description,
+                      priceInCents: selfFulfilledSelection.pricing.retailPriceInCents,
+                      position: 0,
+                      imageUrl: creativeDirection!.productImageUrl,
+                      costInCents:
+                        selfFulfilledSelection.pricing.retailPriceInCents - selfFulfilledSelection.pricing.profitInCents,
+                    },
+                  ],
+                }
+              : {
+                create: products.map((p, index) => ({
+                  name: p.name,
+                  description: p.description || null,
+                  priceInCents: Math.round(p.price * 100),
+                  position: index,
+                  imageUrl: productImages[index],
+                  richContent: {
+                    keyFeatures: p.keyFeatures ?? [],
+                    benefits: p.benefits ?? [],
+                    specifications: p.specifications ?? [],
+                    imagePrompt: p.imagePrompt ?? "",
+                  },
+                })),
+              },
+          // Onboarding v2 — materializes the real StoreIntegration row in the
+          // same nested-create call as the Store and its Product, atomically,
+          // mirroring the existing productsDraft -> Product pattern. The
+          // credentials were already encrypted when written into
+          // StoreDraft.onboardingState by the draft-phase OAuth callback (see
+          // app/api/onboarding/fulfillment/callback/route.ts) — reused as-is,
+          // never decrypted-then-re-encrypted here.
+          integrations: fulfillmentCredentialsEntry
+            ? {
+                create: [
+                  {
+                    provider: fulfillmentCredentialsEntry[0] as Prisma.StoreIntegrationCreateWithoutStoreInput["provider"],
+                    status: "CONNECTED",
+                    externalAccountId: String(
+                      decryptCredentials<{ printfulStoreId?: number }>(fulfillmentCredentialsEntry[1]).printfulStoreId ?? ""
+                    ),
+                    credentials: fulfillmentCredentialsEntry[1] as Prisma.InputJsonValue,
+                    connectedByUserId: userId,
+                    connectedAt: new Date(),
+                    lastVerifiedAt: new Date(),
+                  },
+                ],
+              }
+            : undefined,
+        },
+      });
+
+      // Promote every generation from the draft to the new store so its
+      // history survives the draft being deleted below — this is what makes
+      // "Your Store's Vision" a permanent part of the store, not just the
+      // draft phase.
+      await tx.storeGeneration.updateMany({
+        where: { storeDraftId: draft.id },
+        data: { storeId: created.id, storeDraftId: null },
+      });
+
+      // Stamp whichever generation is live right now as "first refined" — the
+      // version the user actually chose to bring to life. Skip it if that same
+      // generation is already tagged "original" (a store confirmed with zero
+      // edits shouldn't get two competing milestone labels on one row).
+      await tx.storeGeneration.updateMany({
+        where: { storeId: created.id, version: draft.version, milestone: null },
+        data: { milestone: "first_refined" },
+      });
+
+      await tx.storeDraft.delete({ where: { id: draft.id } });
+
+      // THE NEW BUSINESS IS THE ONE THEY ARE NOW IN (2026-08-20), now atomic
+      // with the creation itself rather than a step that could be skipped.
+      //
+      // adoptNewBusiness -> setActiveBusiness checks accessTo first; that check
+      // is satisfied by construction here — this row was created two statements
+      // ago with this userId — and it cannot run inside the transaction anyway,
+      // because it reads through the non-transactional client and would not see
+      // the uncommitted store.
+      await tx.user.update({ where: { id: userId }, data: { activeStoreId: created.id } });
+
+      return created;
+    }, {
+      // Bounded, not a wait: the writes are local and small, but store.create
+      // carries nested product and integration creates and this runs on a cold
+      // serverless connection. Prisma's 5s default has no headroom for that.
+      timeout: 30_000,
+    });
+  } catch (error) {
+    // ============ THE OTHER HALF OF "NEVER TWICE" (2026-09-14) ==========
+    //
+    // The check above closes the sequential retry. Two confirmations of one
+    // draft in flight together would both pass it, and the unique index is
+    // what stops the second — P2002, from the database, rather than a race
+    // this function tried to reason about.
+    //
+    // Re-read rather than trusted: a P2002 here could equally be the slug
+    // index. Only a row that genuinely carries this draft's id is treated as
+    // the winner; anything else is rethrown as the failure it is.
+    const winner =
+      error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
+        ? await prisma.store.findUnique({ where: { createdFromDraftId: draft.id } })
+        : null;
+    if (!winner) throw error;
+    await finishInterruptedConfirmation({
+      storeId: winner.id,
+      draftId: draft.id,
+      draftVersion: draft.version,
       userId,
-      name: storeName,
-      slug,
-      description: storeDescription,
-      tagline: draft.tagline,
-      logoUrl: opts.logoUrl ?? creativeDirection?.logoUrl ?? null,
-      theme,
-      blueprint: (blueprintWithHero as object | null) ?? Prisma.DbNull,
-      version: draft.version,
-      businessCategories: draft.businessCategories,
-      revenueStreams: draft.revenueStreams,
-      brandPositioning: draft.brandPositioning,
-      creativeDirection: (creativeDirection as object | null) ?? Prisma.DbNull,
-      products: fulfillmentSelection
-        ? {
-            // The guided flow's one real, priced, fulfillment-backed
-            // product — externalProductId is filled in just below, once
-            // this real Store (and therefore a real storeId to register
-            // the product under) exists.
-            create: [
-              {
-                name: creativeDirection?.name ?? fulfillmentSelection.candidate.name,
-                description: creativeDirection?.description ?? fulfillmentSelection.candidate.description,
-                priceInCents: fulfillmentSelection.pricing.retailPriceInCents,
-                position: 0,
-                imageUrl: creativeDirection?.productImageUrl ?? fulfillmentSelection.candidate.imageUrl,
-                costInCents:
-                  fulfillmentSelection.pricing.retailPriceInCents - fulfillmentSelection.pricing.profitInCents,
-                fulfillmentProvider: fulfillmentSelection.candidate.provider,
-                externalVariantId: fulfillmentSelection.candidate.variant.externalVariantId,
-              },
-            ],
-          }
-        : selfFulfilledSelection
-          ? {
-              // Self-fulfillment (2026-08-06) — the owner ships this
-              // themselves, so there's no external provider/variant to
-              // record; fulfillmentProvider/externalVariantId stay null,
-              // the exact same shape a manually-created dashboard product
-              // already has (app/dashboard/actions.ts's createProduct).
-              create: [
-                {
-                  name: creativeDirection!.name,
-                  description: creativeDirection!.description,
-                  priceInCents: selfFulfilledSelection.pricing.retailPriceInCents,
-                  position: 0,
-                  imageUrl: creativeDirection!.productImageUrl,
-                  costInCents:
-                    selfFulfilledSelection.pricing.retailPriceInCents - selfFulfilledSelection.pricing.profitInCents,
-                },
-              ],
-            }
-          : {
-            create: products.map((p, index) => ({
-              name: p.name,
-              description: p.description || null,
-              priceInCents: Math.round(p.price * 100),
-              position: index,
-              imageUrl: productImages[index],
-              richContent: {
-                keyFeatures: p.keyFeatures ?? [],
-                benefits: p.benefits ?? [],
-                specifications: p.specifications ?? [],
-                imagePrompt: p.imagePrompt ?? "",
-              },
-            })),
-          },
-      // Onboarding v2 — materializes the real StoreIntegration row in the
-      // same nested-create call as the Store and its Product, atomically,
-      // mirroring the existing productsDraft -> Product pattern. The
-      // credentials were already encrypted when written into
-      // StoreDraft.onboardingState by the draft-phase OAuth callback (see
-      // app/api/onboarding/fulfillment/callback/route.ts) — reused as-is,
-      // never decrypted-then-re-encrypted here.
-      integrations: fulfillmentCredentialsEntry
-        ? {
-            create: [
-              {
-                provider: fulfillmentCredentialsEntry[0] as Prisma.StoreIntegrationCreateWithoutStoreInput["provider"],
-                status: "CONNECTED",
-                externalAccountId: String(
-                  decryptCredentials<{ printfulStoreId?: number }>(fulfillmentCredentialsEntry[1]).printfulStoreId ?? ""
-                ),
-                credentials: fulfillmentCredentialsEntry[1] as Prisma.InputJsonValue,
-                connectedByUserId: userId,
-                connectedAt: new Date(),
-                lastVerifiedAt: new Date(),
-              },
-            ],
-          }
-        : undefined,
-    },
-  });
+    });
+    return { store: winner };
+  }
 
   // WHAT THE OWNER TOLD US, kept (2026-08-23).
   //
@@ -4540,26 +4692,6 @@ export async function confirmStoreDraftCore(
     }
   }
 
-  // Promote every generation from the draft to the new store so its
-  // history survives the draft being deleted below — this is what makes
-  // "Your Store's Vision" a permanent part of the store, not just the
-  // draft phase.
-  await prisma.storeGeneration.updateMany({
-    where: { storeDraftId: draft.id },
-    data: { storeId: store.id, storeDraftId: null },
-  });
-
-  // Stamp whichever generation is live right now as "first refined" — the
-  // version the user actually chose to bring to life. Skip it if that same
-  // generation is already tagged "original" (a store confirmed with zero
-  // edits shouldn't get two competing milestone labels on one row).
-  await prisma.storeGeneration.updateMany({
-    where: { storeId: store.id, version: draft.version, milestone: null },
-    data: { milestone: "first_refined" },
-  });
-
-  await prisma.storeDraft.delete({ where: { id: draft.id } });
-
   // Family-beta instrumentation (v20) — the creation journey's terminal
   // success event. draft.id stays the attemptKey even though the row above
   // is now gone — it's still a stable string tying every creation.* event
@@ -4577,18 +4709,6 @@ export async function confirmStoreDraftCore(
     metadata: { versionsBeforeConfirm: draft.version },
   });
 
-  // THE NEW BUSINESS IS THE ONE THEY ARE NOW IN (2026-08-20).
-  //
-  // Creating a business is a deliberate act, which makes it one of the two
-  // places allowed to set the active one (lib/businessContext.ts). Without this,
-  // an account making its SECOND business would land in the ambiguous state —
-  // more than one business and nothing saying which — and the resolver refuses
-  // to guess there. Setting it here is what keeps that state unreachable through
-  // any normal path, rather than merely handled when it happens.
-  //
-  // Deliberately after the store is fully written and its event logged: an
-  // account should never be pointed at a business whose creation did not finish.
-  await adoptNewBusiness(userId, store.id);
 
   return { store };
 }
