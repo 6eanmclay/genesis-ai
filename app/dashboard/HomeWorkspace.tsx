@@ -37,7 +37,7 @@ import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
-import { getOpenTasks } from "@/lib/dashboard/tasks";
+import { getActiveTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionCardList } from "./AttentionCardList";
 import { J4NoticedDisclosure } from "./J4NoticedDisclosure";
@@ -275,7 +275,7 @@ export async function HomeWorkspace({
       blueprint: store.blueprint,
     });
   }
-  const openTasks = isOwnerManager ? await getOpenTasks(store.id) : [];
+  const activeTasks = isOwnerManager ? await getActiveTasks(store.id) : [];
   const [discoveryItems, lastDiscoveryRunAt, pendingApprovals, nextRecommendation, dismissedCardIds] = canViewAnalytics
     ? await Promise.all([
         getDiscoveryFeed(store.id),
@@ -344,7 +344,7 @@ export async function HomeWorkspace({
     pendingApprovals,
     nextRecommendation,
     discoveryItems,
-    tasks: openTasks.map((t) => ({
+    tasks: activeTasks.map((t) => ({
       id: t.id,
       title: t.title,
       summary: t.summary,

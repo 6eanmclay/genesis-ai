@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import { resolveOfficeAccess } from "@/lib/j4/officeAccess";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
-import { getOpenTasks } from "@/lib/dashboard/tasks";
+import { getActiveTasks } from "@/lib/dashboard/tasks";
 import { getHandledSince } from "@/lib/dashboard/handled";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { LEGACY_BUSINESS_BASE, businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
@@ -131,7 +131,7 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
   // Localhost measured 156ms against 5ms, a ratio of 31 where production is
   // 1.85 — the round trips that dominate the Office's reads simply are not
   // there. So the local numbers are NOT quoted as the cost of this change.
-  const [observations, pendingApprovals, openTasks, activeProductCount, handledRaw, understanding] =
+  const [observations, pendingApprovals, activeTasks, activeProductCount, handledRaw, understanding] =
     await Promise.all([
       // DECLARED. BUSINESS_UNDERSTANDING_CONTRACT.md invariant 3: a direct read
       // is legitimate when it is said out loud. Observations are outstanding
@@ -164,7 +164,7 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       // lasts, and the UI commit is where "should 158 inert explanations reach
       // Same permission tier as before the move.
       hasPermission(role, PERMISSIONS.ANALYTICS_VIEW) ? getPendingApprovals(store.id) : Promise.resolve([]),
-      getOpenTasks(store.id),
+      getActiveTasks(store.id),
       declaredRead("presentation", "a count for one Office fact row, not a fact about the catalogue", () =>
         prisma.product.count({ where: { storeId: store.id, active: true } }),
       ),
@@ -230,7 +230,7 @@ export async function loadOfficeIntelligence(slug?: string): Promise<OfficeIntel
       // NARROWED AT THE BOUNDARY, like the observations above: Task.priority
       // is a text column so Prisma types it `string`, and the Office renders
       // its three values as three colours.
-      tasks: openTasks.map((t) => ({ ...t, priority: t.priority as TaskPriority })),
+      tasks: activeTasks.map((t) => ({ ...t, priority: t.priority as TaskPriority })),
       handled,
     },
     basePath,

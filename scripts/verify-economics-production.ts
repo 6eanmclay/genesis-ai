@@ -44,7 +44,7 @@ async function main() {
 
   const { runTaskDetection } = await import("@/lib/dashboard/taskDetectors");
   const { buildAttentionCards } = await import("@/lib/dashboard/attentionCards");
-  const { getOpenTasks } = await import("@/lib/dashboard/tasks");
+  const { getActiveTasks } = await import("@/lib/dashboard/tasks");
   const { applyEconomicsAnswer, parseCardEconomicsAnswer, outstandingEconomicsQuestions } =
     await import("@/lib/sourcing/economicsChat");
   const { producerFromSource, runEconomicsProducer } = await import("@/lib/sourcing/economicsProducer");
@@ -169,7 +169,7 @@ async function main() {
   };
 
   const cardsFor = async (storeId: string, currency = "USD") => {
-    const tasks = await getOpenTasks(storeId);
+    const tasks = await getActiveTasks(storeId);
     return buildAttentionCards({ basePath: LEGACY_BUSINESS_BASE,
       issues: [], pendingApprovals: [], nextRecommendation: null, discoveryItems: [],
       tasks: tasks.map((t) => ({

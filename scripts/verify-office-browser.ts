@@ -62,6 +62,32 @@ const MARKER = {
 
 type ViewKey = keyof typeof MARKER;
 
+/**
+ * A task the owner has ALREADY handed to J4 — deliberately outside MARKER.
+ *
+ * ============ THE SAME VIEW, LOSING TASKS AGAIN (2026-09-15) ===========
+ *
+ * This file's own header records the last time Tasks went blank: getOpenTasks
+ * was gated behind `isRoom ? … : []`, so the view showed its empty state no
+ * matter how many open tasks a store had. That was fixed in 2026-08-16.
+ *
+ * It happened again, one layer down and for a different reason. The query
+ * itself filtered `status: "OPEN"`, and startTaskConversation sets IN_PROGRESS
+ * the moment an owner clicks a task — so a task DISAPPEARED from the Office at
+ * exactly the point the owner started working on it, and from the Business
+ * arrival too, since both surfaces read that one function. In production:
+ * two such tasks, unseen for 38 and 39 days.
+ *
+ * Neither bug was a type error, and neither was visible to any suite that did
+ * not open the tab and read what came back. So the resumed task is seeded here
+ * with its own marker and asserted in the rendered view.
+ *
+ * NOT A MARKER VIEW KEY. The loop above asserts each view shows its own marker
+ * and no other view's; this is a second row inside the Tasks view, not a sixth
+ * view, and adding it to MARKER would invent a tab that does not exist.
+ */
+const RESUMED_TASK_MARKER = "ZZRESUMEDTASKMARKER";
+
 /** The two sides of the seeded decision's diff, so the rendered page can be
  *  asserted to show the real values rather than a summary of them. */
 const DIFF_BEFORE = "ZZDIFFBEFORE";
@@ -454,6 +480,21 @@ async function main() {
         status: "OPEN",
       },
     });
+    // AND ONE THE OWNER ALREADY PICKED UP. Same shape, same store, differing
+    // only in the status startTaskConversation writes when a task is handed
+    // over — which is precisely the difference that used to erase it.
+    await prisma.task.create({
+      data: {
+        storeId: store.id,
+        dedupeKey: "office.test.task.resumed",
+        source: "manual",
+        title: `${RESUMED_TASK_MARKER} title`,
+        summary: "A task the owner already handed to J4.",
+        context: {},
+        priority: "WARNING",
+        status: "IN_PROGRESS",
+      },
+    });
     // Ideas — an opportunity observation.
     await prisma.genesisObservation.create({
       data: {
@@ -636,6 +677,25 @@ async function main() {
       const leaked = (Object.keys(MARKER) as ViewKey[])
         .filter((other) => other !== key && !allowed.includes(other) && text.includes(MARKER[other]));
       check(`${TAB_LABEL[key]} shows nothing belonging to another view`, leaked, []);
+    }
+
+    // ======================================================================
+    // WORK ALREADY UNDER WAY IS STILL ON THE SCREEN (2026-09-15)
+    // ======================================================================
+    //
+    // The rendered half of the fix. verify-tasks-live proves the query returns
+    // the row; only this proves the owner can see it — the same distinction
+    // that made this suite necessary in the first place.
+    {
+      const tasksView = await showView(page, TAB_LABEL.tasks);
+      assert("a task the owner already handed to J4 is still on the screen",
+        tasksView.includes(RESUMED_TASK_MARKER),
+        "an IN_PROGRESS task rendered nowhere — the owner started it and it vanished");
+      // BOTH, not one instead of the other. A fix that swapped which rows are
+      // visible would pass a test that only looked for the resumed one.
+      assert("  alongside the one they have not started",
+        tasksView.includes(MARKER.tasks),
+        "the untouched task went missing when in-progress ones were admitted");
     }
 
     // ======================================================================

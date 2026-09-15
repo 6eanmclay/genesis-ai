@@ -36,7 +36,6 @@ import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
 import { runOpportunisticAiReviewIfStale } from "@/lib/dashboard/genesisObservations";
 import { measureDueMeasurements } from "@/lib/dashboard/postExecutionMeasurement";
 import { runTaskDetection } from "@/lib/dashboard/taskDetectors";
-import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ActivityFeed } from "./ActivityFeed";
 import { AttentionCardList } from "./AttentionCardList";
 import { J4NoticedDisclosure } from "./J4NoticedDisclosure";

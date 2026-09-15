@@ -99,9 +99,55 @@ export async function resolveStaleTasks(storeId: string, source: string, freshDe
   });
 }
 
-export async function getOpenTasks(storeId: string) {
+/**
+ * The statuses that mean a task is still real work.
+ *
+ * COMPLETED and DISMISSED are the only two endings; everything else is
+ * outstanding. Spelled once here because four separate places had written this
+ * same set out by hand, and a set that lives in four places is one edit away
+ * from four different answers to "is this still open".
+ *
+ * AWAITING_INPUT is in the list because it is in the schema's non-terminal set,
+ * not because anything writes it — nothing does, today. Including it in a READ
+ * costs nothing and means the day something starts writing it, the owner sees
+ * those rows instead of losing them the way IN_PROGRESS rows were being lost.
+ */
+export const ACTIVE_TASK_STATUSES = ["OPEN", "IN_PROGRESS", "AWAITING_INPUT"] as const;
+
+/**
+ * Every task still outstanding for a business — including the ones under way.
+ *
+ * ============ WHAT THIS EXISTS TO END (2026-09-15) =====================
+ *
+ * This was `getOpenTasks` and it filtered `status: "OPEN"` and nothing else,
+ * while being the ONLY owner-facing task query in the product: the Office
+ * (app/j4/intelligence-actions.ts) and the Business arrival
+ * (app/dashboard/HomeWorkspace.tsx) both read it.
+ *
+ * So handing a task to J4 deleted it from the owner's world. startTaskConversation
+ * writes a seed turn and sets IN_PROGRESS, then redirects to /j4 — and from that
+ * moment the task appeared on no surface at all. Not moved, not marked: absent.
+ *
+ * AND IT COULD NOT COME BACK. upsertTask's reactivation is scoped to
+ * COMPLETED/DISMISSED, and resolveStaleTasks sweeps `status: "OPEN"`, so an
+ * IN_PROGRESS task that never completed was invisible AND exempt from the
+ * staleness sweep. Permanently, not temporarily.
+ *
+ * Measured in production on 2026-09-15, before changing a line: seven Task rows
+ * in total, three of them non-terminal — and TWO of those three were
+ * IN_PROGRESS, handed to J4 38 and 39 days earlier, both with a real
+ * destination, both invisible on every surface the owner has. One task in three
+ * was visible.
+ *
+ * VISIBILITY ONLY, which is the whole change. A resumed task keeps the action
+ * officeActionForTask already gives it and lands where that action puts it.
+ * Nothing here decides it is "waiting on the owner", gives it a new section, or
+ * invents a status for it — those were the other two options and Sean chose
+ * this one deliberately.
+ */
+export async function getActiveTasks(storeId: string) {
   return prisma.task.findMany({
-    where: { storeId, status: "OPEN" },
+    where: { storeId, status: { in: [...ACTIVE_TASK_STATUSES] } },
     orderBy: { createdAt: "asc" },
   });
 }
@@ -141,7 +187,7 @@ export async function completeTasksForAction(
     // Status-scoped for the same reason the legacy path is: a task already
     // finished or dismissed is not re-finished by a later action.
     await prisma.task.updateMany({
-      where: { id: taskId, storeId, status: { in: ["OPEN", "IN_PROGRESS", "AWAITING_INPUT"] } },
+      where: { id: taskId, storeId, status: { in: [...ACTIVE_TASK_STATUSES] } },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
     return;

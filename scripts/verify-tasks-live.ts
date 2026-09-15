@@ -50,7 +50,7 @@ async function main() {
   process.env[TEST_DATABASE_ENV] = "1";
   process.env.DATABASE_URL = db.url;
 
-  const { upsertTask, resolveStaleTasks, getOpenTasks, completeTasksForAction } = await import(
+  const { upsertTask, resolveStaleTasks, getActiveTasks, completeTasksForAction } = await import(
     "@/lib/dashboard/tasks"
   );
   const { prismaSystem: prisma } = await import("@/lib/prisma");
@@ -161,12 +161,12 @@ async function main() {
   await upsertTask(store.id, task({ dedupeKey: "observation:slow-week", source: "observation", title: "A quiet week" }) as never);
   await upsertTask(store.id, task({ dedupeKey: "brand_gap:no-logo", source: "brand_gap", title: "No logo yet" }) as never);
 
-  const beforeSweep = (await getOpenTasks(store.id)).map((t) => t.dedupeKey).sort();
+  const beforeSweep = (await getActiveTasks(store.id)).map((t) => t.dedupeKey).sort();
   assert("three sources have open tasks", beforeSweep.length >= 3, beforeSweep.join(", "));
 
   // The state_issue sweep runs with nothing fresh: its own tasks complete.
   await resolveStaleTasks(store.id, "state_issue", []);
-  const afterSweep = (await getOpenTasks(store.id)).map((t) => t.dedupeKey).sort();
+  const afterSweep = (await getActiveTasks(store.id)).map((t) => t.dedupeKey).sort();
   assert("the state-issue tasks are completed",
     !afterSweep.some((k) => k.startsWith("state_issue:")), afterSweep.join(", "));
   assert("the observation task is untouched", afterSweep.includes("observation:slow-week"),
@@ -218,10 +218,10 @@ async function main() {
   console.log("\n=== 7. The list is the owner's own, per business ===\n");
   // ==========================================================================
   const other = await makeStore(owner.id, "Other Task Store");
-  check("a new business has an empty list", await getOpenTasks(other.id), []);
+  check("a new business has an empty list", await getActiveTasks(other.id), []);
 
   await upsertTask(other.id, task({ dedupeKey: "state_issue:no-products", title: "Theirs" }) as never);
-  const theirs = await getOpenTasks(other.id);
+  const theirs = await getActiveTasks(other.id);
   check("its own task is its own", theirs.map((t) => t.title), ["Theirs"]);
   assert("sharing a dedupeKey with the neighbour is fine",
     theirs.length === 1, "the key is unique per store, not globally");
@@ -229,9 +229,9 @@ async function main() {
   // Sweeping one business never reaches the other.
   await resolveStaleTasks(other.id, "state_issue", []);
   check("the swept business has none of that source left",
-    (await getOpenTasks(other.id)).filter((t) => t.source === "state_issue").length, 0);
+    (await getActiveTasks(other.id)).filter((t) => t.source === "state_issue").length, 0);
   check("while the neighbour keeps its own",
-    (await getOpenTasks(store.id)).filter((t) => t.dedupeKey === "state_issue:no-products").length, 1);
+    (await getActiveTasks(store.id)).filter((t) => t.dedupeKey === "state_issue:no-products").length, 1);
 
   // And completing by action does not cross either.
   await upsertTask(other.id, task({ dedupeKey: "chat:theirs", source: "chat", actionType: "update_hero" }) as never);
@@ -244,13 +244,73 @@ async function main() {
     "IN_PROGRESS");
 
   // ==========================================================================
-  console.log("\n=== 8. Only open tasks are open ===\n");
+  console.log("\n=== 8. Work under way is still the owner's work ===\n");
   // ==========================================================================
-  const open = await getOpenTasks(store.id);
+  //
+  // ============ THE FAILURE THIS SECTION EXISTS FOR (2026-09-15) =========
+  //
+  // This read was `status: "OPEN"` and nothing else, and it is the ONLY
+  // owner-facing task query in the product — the Office and the Business
+  // arrival both call it. So the moment an owner handed a task to J4,
+  // startTaskConversation set IN_PROGRESS and the task vanished from every
+  // surface they have. Not moved. Not marked. Absent.
+  //
+  // And it could not return: upsertTask reactivates only COMPLETED/DISMISSED
+  // rows, and resolveStaleTasks sweeps status OPEN, so a task the owner never
+  // finished was invisible AND exempt from the staleness sweep, permanently.
+  //
+  // In production on 2026-09-15: three non-terminal tasks, TWO of them
+  // IN_PROGRESS and unseen for 38 and 39 days. One task in three was visible.
+  //
+  // The assertion below used to read `every(t => t.status === "OPEN")` — it
+  // passed, and it was pinning the defect in place.
+  // ITS OWN FIXTURE, because every earlier task in this store has since been
+  // completed by section 6's and section 7's action sweeps. A section that
+  // depends on another section's leftovers asserts whatever ran before it.
+  await upsertTask(store.id, task({
+    dedupeKey: "chat:handed-over", source: "chat", title: "Write the About page",
+  }) as never);
+  // What startTaskConversation does: the owner clicks, a seed turn is written,
+  // and the task moves to IN_PROGRESS. The status is the whole trigger.
+  await prisma.task.updateMany({
+    where: { storeId: store.id, dedupeKey: "chat:handed-over" },
+    data: { status: "IN_PROGRESS" },
+  });
+
+  const active = await getActiveTasks(store.id);
+
+  // THE ONE THAT MATTERS. A task the owner started must still be listed.
+  const resumed = await prisma.task.findFirstOrThrow({
+    where: { storeId: store.id, dedupeKey: "chat:handed-over" },
+  });
+  assert("a task the owner handed to J4 is still listed",
+    active.some((t) => t.id === resumed.id),
+    `status ${resumed.status}; listed ${active.length} task(s)`);
+
+  // AND IT IS STILL THE SAME ROW, not a copy or a rewritten one.
+  assert("  and it is the same task, in progress",
+    active.find((t) => t.id === resumed.id)?.status === "IN_PROGRESS",
+    active.find((t) => t.id === resumed.id)?.status ?? "(absent)");
+
+  // THE OTHER HALF OF THE CONTRACT. Visibility widened to work under way; it
+  // did NOT widen to work that is over. A finished task reappearing would be
+  // this fix overshooting into nagging the owner about settled things.
   assert("nothing completed or dismissed is listed",
-    open.every((t) => t.status === "OPEN"), open.map((t) => t.status).join(", "));
+    active.every((t) => t.status !== "COMPLETED" && t.status !== "DISMISSED"),
+    active.map((t) => t.status).join(", "));
+
+  const dismissed = await prisma.task.create({
+    data: {
+      storeId: store.id, dedupeKey: "state_issue:dropped", source: "state_issue",
+      title: "Set aside", summary: "The owner dismissed this.", context: {},
+      priority: "opportunity", status: "DISMISSED", dismissedAt: new Date(),
+    },
+  });
+  assert("  including one dismissed just now",
+    !(await getActiveTasks(store.id)).some((t) => t.id === dismissed.id));
+
   assert("oldest first, so the list does not reshuffle as it is worked",
-    open.every((t, i) => i === 0 || open[i - 1].createdAt.getTime() <= t.createdAt.getTime()));
+    active.every((t, i) => i === 0 || active[i - 1].createdAt.getTime() <= t.createdAt.getTime()));
 
   await prisma.$disconnect();
   await db.close();

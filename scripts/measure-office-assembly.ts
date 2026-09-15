@@ -82,7 +82,7 @@ async function main() {
   const { prisma } = await import("@/lib/prisma");
   const { getBusinessUnderstanding } = await import("@/lib/businessModel/understanding");
   const { getPendingApprovals } = await import("@/lib/dashboard/pendingApprovals");
-  const { getOpenTasks } = await import("@/lib/dashboard/tasks");
+  const { getActiveTasks } = await import("@/lib/dashboard/tasks");
   const { getHandledSince } = await import("@/lib/dashboard/handled");
   const { officeFacts } = await import("@/lib/j4/officeFacts");
   const { buildBriefing, summariseHandled } = await import("@/lib/j4/officeBriefing");
@@ -173,7 +173,7 @@ async function main() {
         orderBy: { generatedAt: "desc" },
       }),
       getPendingApprovals(store.id),
-      getOpenTasks(store.id),
+      getActiveTasks(store.id),
       prisma.product.count({ where: { storeId: store.id, active: true } }),
       getHandledSince(store.id, 14),
     ]);

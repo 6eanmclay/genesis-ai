@@ -5,7 +5,6 @@ import { formatMoney } from "@/lib/money";
 import { PERMISSIONS, hasPermission } from "@/lib/permissions";
 import { resolveOfficeAccess } from "@/lib/j4/officeAccess";
 import { getPendingApprovals } from "@/lib/dashboard/pendingApprovals";
-import { getOpenTasks } from "@/lib/dashboard/tasks";
 import { ACTION_SECTIONS } from "@/lib/execution/genesisActions";
 import { LEGACY_BUSINESS_BASE, businessBasePath, sectionHref } from "@/lib/dashboard/navConfig";
 import { sendStoreMessage, uploadBusinessAssetFromChat, uploadPhotoBatchFromChat, uploadVoiceMemo } from "@/app/dashboard/ai-actions";
