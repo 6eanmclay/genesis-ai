@@ -233,6 +233,54 @@ async function main(): Promise<void> {
   eq("while the runner's own line, at column zero, still parses",
     suiteNameFrom("FAIL  rooms"), "rooms");
 
+  // ======================================================================
+  console.log("\n=== 7. A comment cannot decide a suite's lane ===\n");
+  // ======================================================================
+  //
+  // WHAT THIS EXISTS TO END (2026-09-16). Every lane predicate matched its
+  // patterns against raw file text, so a suite that merely DESCRIBED what it
+  // tested was filed by what its prose said rather than by what it did.
+  //
+  // It was not theoretical. verify-authority-boundary was given a Postgres it
+  // never opened because one comment says "prisma.store.update"; and
+  // verify-harness-isolation was given a Next server because two comments name
+  // the helper it deliberately does NOT call. Three suites had already been
+  // reworded to appease the classifier, one of them in the very comment
+  // explaining that reading prose as code is a bug.
+  //
+  // ASSERTED AGAINST THE REAL FILES, not a fixture. A fixture would prove that
+  // a stripping function strips; these two are the suites that were actually
+  // misfiled, and they are the ones that regress if the reads go back to raw.
+  {
+    const bySentenceOnly = "verify-authority-boundary.ts";
+    assert(
+      `${bySentenceOnly} is not database-backed because a sentence mentions the client`,
+      !needsDatabase(bySentenceOnly) && isCodeOnly(bySentenceOnly),
+      `db=${needsDatabase(bySentenceOnly)} code=${isCodeOnly(bySentenceOnly)}`,
+    );
+
+    const namesTheHelper = "verify-harness-isolation.ts";
+    assert(
+      `${namesTheHelper} is not an http suite because a comment names the server helper`,
+      httpLane(namesTheHelper) === null && isCodeOnly(namesTheHelper),
+      `http=${httpLane(namesTheHelper)} code=${isCodeOnly(namesTheHelper)}`,
+    );
+
+    // AND THE PREDICATES STILL SEE REAL CODE. Stripping comments must not have
+    // blinded them — a classifier that files everything as code-only would pass
+    // both assertions above and be worthless.
+    assert(
+      "a suite that really imports the client is still database-backed",
+      needsDatabase("verify-task-continuity-db.ts"),
+      "verify-task-continuity-db.ts",
+    );
+    assert(
+      "and a suite that really starts a server is still an http suite",
+      httpLane("verify-checkout-e2e.ts") !== null,
+      `${httpLane("verify-checkout-e2e.ts")}`,
+    );
+  }
+
   console.log(`\n${failures} failed, ${passes} passed`);
   if (failed.length > 0) {
     console.log("\nFailures:");

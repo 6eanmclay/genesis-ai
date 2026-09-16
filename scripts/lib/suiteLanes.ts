@@ -29,8 +29,53 @@ export const SCRIPTS_DIR = join(process.cwd(), "scripts");
 const LIVE_MODEL_CLIENT = /from "@anthropic-ai\/sdk"|new Anthropic\(/;
 const DATABASE_BACKED = /from "@\/lib\/prisma"|prismaSystem|prisma\./;
 
+/**
+ * A suite's source with comments removed — the only thing any lane should read.
+ *
+ * ============ PROSE IS NOT CODE (2026-09-16) ==========================
+ *
+ * Every pattern above was matched against raw file text, so a suite that merely
+ * DESCRIBED what it was testing was filed by what its comments said rather than
+ * by what it did. That is not a hypothetical: it has now cost four separate
+ * incidents.
+ *
+ *   verify-client-boundary-graph.ts had to be reworded, twice — first because
+ *   its own parser matched the word "import" inside a sentence, then because a
+ *   header sentence ending in the database client's name filed a suite that
+ *   touches no database under the database lane.
+ *
+ *   verify-checkout-preview-shipping-db.ts quoted the defective line it had
+ *   just fixed, and its own source assertion found the quotation.
+ *
+ *   verify-test-isolation.ts had to omit the spellings this file watches for,
+ *   in the very comment explaining that reading prose as code is a bug.
+ *
+ * Each of those was worked around in the suite. This is the cause.
+ *
+ * MEASURED BEFORE CHANGING, because a classifier is not a thing to guess at.
+ * Across all six patterns and every suite, exactly three verdicts change, and
+ * all three are corrections:
+ *
+ *   verify-authority-boundary.ts   its only mention of the client is the
+ *                                  sentence "prisma.store.update and its target
+ *                                  IS the store" — it imports nothing, and was
+ *                                  being given a Postgres it never opened
+ *   verify-harness-isolation.ts    names the server helper twice in comments
+ *                                  while deliberately spawning its own child
+ *                                  process, and was being given a Next server
+ *   run-pg-suites.ts               a runner, which no lane claims anyway
+ *
+ * The `[^:]` guard keeps a `https://` inside a string from being read as the
+ * start of a comment.
+ */
+function sourceOf(file: string): string {
+  return readFileSync(join(SCRIPTS_DIR, file), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
 export function needsDatabase(file: string): boolean {
-  const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  const source = sourceOf(file);
   if (file === "run-db-suites.ts") return false;
 
   // A SUITE THAT BRINGS ITS OWN DATABASE IS NOT THIS RUNNER'S TO RUN, and this
@@ -164,7 +209,7 @@ export type HttpLane = "shared" | "own" | "browser";
 
 export function httpLane(file: string): HttpLane | null {
   if (file === "run-http-suites.ts") return null;
-  const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  const source = sourceOf(file);
   // ============ A SERVER, SPECIFICALLY (2026-08-30) ================
   //
   // This briefly also matched startRealPostgres, on the reasoning that a suite
@@ -234,7 +279,7 @@ export function isCodeOnly(file: string): boolean {
   if (file.startsWith("run-")) return false;
   if (httpLane(file) !== null) return false;
   if (needsDatabase(file)) return false;
-  const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  const source = sourceOf(file);
   // Brings its own Postgres — real work, but a different runner's problem.
   // Tracked as gap 23's other half.
   if (/startRealPostgres/.test(source)) return false;
@@ -283,7 +328,7 @@ export function isCodeOnlyWithLiveModel(file: string): boolean {
   if (file.startsWith("run-")) return false;
   if (httpLane(file) !== null) return false;
   if (needsDatabase(file)) return false;
-  const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+  const source = sourceOf(file);
   if (/startRealPostgres/.test(source)) return false;
   if (DATABASE_BACKED.test(source)) return false;
   return LIVE_MODEL_CLIENT.test(source);
