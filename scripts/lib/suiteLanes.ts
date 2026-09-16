@@ -342,6 +342,21 @@ export function isCodeOnlyWithLiveModel(file: string): boolean {
  * 'belongs to another lane' — everything else is decided by asking.
  */
 export const PERMANENTLY_EXCLUDED: Record<string, string> = {
+  // AUDITED 2026-09-16, and it is redundancy rather than a coverage hole.
+  // "One permanently excluded suite" reads like an untested money path, so this
+  // was checked rather than assumed. What it uniquely claims — a REAL
+  // Stripe-signed event over REAL HTTP — verify-checkout-e2e already does, in
+  // the HTTP lane, and its own header says so: "the payment step POSTs a
+  // genuinely Stripe-signed event to a REAL Next server over HTTP — exactly as
+  // Stripe would. No Stripe account is needed for that." Its five cases are
+  // covered by suites that run: charge.refunded by verify-money-replay-db,
+  // verify-order-disputes-db, verify-order-notifications and
+  // verify-webhook-handlers; the connected-account trust boundary by
+  // verify-order-webhook-live, whose own assertion is that money lands in the
+  // right merchant's store. Left excluded rather than converted: STRIPE_SECRET_KEY
+  // and STRIPE_WEBHOOK_SECRET are both present locally, so it COULD be given a
+  // harness server, but rebuilding covered ground is not worth destabilising
+  // the lane it would join.
   "verify-stripe-webhook-e2e.ts":
     "POSTs to a running Next server this repository deliberately does not start for it: npm run dev, then run it by name",
 };
