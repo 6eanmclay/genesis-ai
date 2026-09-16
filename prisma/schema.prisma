@@ -2086,6 +2086,20 @@ model ApprovalRequest {
   @@index([storeId, status])
   @@index([attemptExecutionId])
   @@index([aiUsageEventId])
+  // Completion looks an approval up by its task, so the lookup is indexed.
+  //
+  // DECLARED HERE 2026-09-16, and the index itself is not new. Migration
+  // 20260914180000_approval_task_identity created it and this line was never
+  // written, so the database had an index schema.prisma did not know about —
+  // drift in the quietest direction, since everything works and nothing
+  // complains. verify-restore caught it by replaying every migration onto an
+  // empty Postgres and diffing the result, which is the one check that can.
+  //
+  // NO NEW MIGRATION, deliberately. The index already exists in every replayed
+  // database and in production (applied 2026-09-16T21:53:44Z). Writing one to
+  // create it again would be SQL that either fails or does nothing; the schema
+  // is the side that was wrong.
+  @@index([taskId])
   // Every revision of one proposal, newest last. The only access pattern this
   // chain has: "show me this proposal, including how we got here."
   @@index([proposalId, revision])
