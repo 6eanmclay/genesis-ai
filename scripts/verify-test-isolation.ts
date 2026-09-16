@@ -126,16 +126,81 @@ async function main() {
   {
     // The realistic regression is not someone removing the guard — it is
     // someone adding a THIRTEENTH suite and not knowing this exists.
+    //
+    // ============ WHAT THIS ASKED, AND WHY IT WAS WRONG (2026-09-16) =====
+    //
+    // It matched the database client's NAME against the RAW SOURCE of every
+    // suite, so a suite that merely SPELLS that name counted as touching the
+    // database. Two did: verify-reference-design and verify-temporary-assets
+    // are source-shape tests that read other files' text, and both carry the
+    // name inside a regex literal. Neither opens a connection. They were
+    // reported as unguarded and the suite sat accepted-red because of it.
+    //
+    // Prose read as code — the third time this repository has been bitten by
+    // exactly that, after suiteLanes classifying a comment and the client
+    // boundary checker matching the word "import" inside one.
+    //
+    // THE FALSE NEGATIVE WAS THE WORSE HALF, and only measuring found it.
+    // Fifteen suites that really do reach the client were invisible to this
+    // check: they load it through a DYNAMIC import and destructure the plain
+    // export, so neither spelling the old pattern looked for appears anywhere
+    // in the file. A text search for how an import is usually written cannot
+    // see an import written another way.
+    //
+    // So it asks two real questions instead, both about code rather than text:
+    //
+    //   1. Does this suite bring its OWN database? Two helper modules start a
+    //      throwaway one and write the marker themselves, which is what makes
+    //      it safe. That replaces a hardcoded list of two filenames — a list
+    //      that was already wrong, since all fifteen suites above are in this
+    //      category and were not on it.
+    //
+    //      ASKED AS AN IMPORT, not as the helpers' function names. suiteLanes
+    //      classifies by raw source too, so naming those functions here moved
+    //      THIS suite into a different lane — the very mistake being fixed two
+    //      paragraphs up, committed while fixing it. The import is the real
+    //      signal anyway: a suite cannot start a database it never imported.
+    //
+    //      THE SAME RULE APPLIES TO THIS COMMENT. suiteLanes reads prose as
+    //      code, so the spellings it keys on are deliberately not written out
+    //      above. That is a workaround for a real defect in the classifier,
+    //      recorded rather than hidden.
+    //
+    //   2. Otherwise, does it IMPORT prisma — static or dynamic? Then it
+    //      connects to whatever DATABASE_URL names, and it must ask
+    //      requireTestDatabase first.
     const dir = join(process.cwd(), "scripts");
     const unguarded: string[] = [];
+    const ownDatabase: string[] = [];
+    /** Source with comments gone, so a sentence is never read as a statement. */
+    const codeOnly = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    // ANCHORED TO A LINE START, and with the real path spelling. A regex
+    // literal that quotes `from "@\/lib\/prisma"` carries backslashes and does
+    // not begin a line with `import`, so it cannot be mistaken for one.
+    const STATIC_IMPORT = /^\s*import[^;]*from\s*["'](@\/lib\/prisma|\.\.\/lib\/prisma)["']/m;
+    const DYNAMIC_IMPORT = /import\(\s*["'](@\/lib\/prisma|\.\.\/lib\/prisma)["']\s*\)/;
+    const OWN_DATABASE = /from\s*["']@\/scripts\/lib\/(realPostgres|testDatabase)["']/;
+
     for (const file of readdirSync(dir).filter((f) => f.startsWith("verify-") && f.endsWith(".ts"))) {
-      const source = readFileSync(join(dir, file), "utf8");
-      // Suites that bring their own database create the marker themselves.
-      if (file === "verify-db-integrity.ts" || file === "verify-ledger-live.ts") continue;
-      const touchesDatabase = /from "@\/lib\/prisma"|from "\.\.\/lib\/prisma"|prismaSystem/.test(source);
+      const source = codeOnly(readFileSync(join(dir, file), "utf8"));
+      // Brings its own database, and the helper writes the marker into it.
+      if (OWN_DATABASE.test(source)) {
+        ownDatabase.push(file);
+        continue;
+      }
+      const touchesDatabase = STATIC_IMPORT.test(source) || DYNAMIC_IMPORT.test(source);
       if (touchesDatabase && !source.includes("requireTestDatabase")) unguarded.push(file);
     }
     check("no unguarded database suite exists", unguarded, []);
+    // NOT VACUOUS. If the own-database rule ever stopped matching, every one of
+    // those suites would silently fall into the branch above and this check
+    // would start passing for the wrong reason.
+    assert(
+      "and the own-database rule still recognises the suites that bring one",
+      ownDatabase.length > 10,
+      `${ownDatabase.length} suites start their own database`,
+    );
   }
 
   if (original === undefined) delete process.env[TEST_DATABASE_ENV];
