@@ -20,6 +20,7 @@ import { saveDesignDraft, createProductFromDesign, creationCost } from "./action
 
 export function CreationStationClient({
   slug,
+  currency,
   garment,
   assets,
   blanks,
@@ -32,6 +33,8 @@ export function CreationStationClient({
   alreadyCreated,
 }: {
   slug: string;
+  /** The business's own currency. Required, never defaulted — see CreationStation. */
+  currency: string;
   garment: Garment;
   assets: LibraryAsset[];
   /** The supplier's blanks, and why there are none if there are none. */
@@ -65,6 +68,8 @@ export function CreationStationClient({
     // A REOPENED DRAFT KEEPS THE OWNER'S PRICE. Recomputing the suggestion
     // would quietly overwrite a number they had already decided on.
     initialPriceInCents != null
+      // MONEY-SWEEP OK: the value of a number input the owner types into, in
+      // whole units and with no symbol — the same case as EditProductForm.
       ? String(Math.round(initialPriceInCents / 100))
       : supplierCost === null
         ? ""
@@ -137,6 +142,7 @@ export function CreationStationClient({
 
       <CreationStation
         slug={slug}
+        currency={currency}
         garment={garment}
         assets={assets}
         blankImages={blanks.images}

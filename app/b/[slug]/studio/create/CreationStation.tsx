@@ -18,7 +18,6 @@ import {
   areaFor,
   blankFor,
   designableViews,
-  formatCents,
   renderableColors,
   spinViews,
   productLabel,
@@ -28,6 +27,10 @@ import {
   type BlankImage,
 } from "@/lib/creation/garment";
 import { applyOperation, describeOperation, operationsFor, type DesignOperation } from "@/lib/creation/operations";
+// THE ONE PLACE A PRICE BECOMES A STRING. This screen used to reach for
+// garment.ts's own formatCents, which always said dollars — see the note where
+// that function used to be.
+import { formatMoney } from "@/lib/money";
 import { CreationCanvas } from "./CreationCanvas";
 import { DesignToolbar, ToolIcons } from "./DesignToolbar";
 import { AddAssetPanel } from "./AddAssetPanel";
@@ -62,6 +65,7 @@ interface Asset {
 
 export function CreationStation({
   slug,
+  currency,
   garment,
   assets,
   blankImages,
@@ -76,6 +80,15 @@ export function CreationStation({
 }: {
   /** The business these assets and actions belong to. */
   slug: string;
+  /**
+   * The business's own currency, for every figure on this screen.
+   *
+   * REQUIRED AND NOT DEFAULTED. A default of "USD" would make the wrong
+   * symbol the quiet outcome of forgetting to pass it, which is exactly how
+   * the hardcoded dollar sign survived here — see lib/money.ts's own note:
+   * "inventing one is the failure this rule exists to stop."
+   */
+  currency: string;
   garment: Garment;
   assets: LibraryAsset[];
   /** The supplier's transparent blanks for this product. Empty is a real answer. */
@@ -544,7 +557,7 @@ export function CreationStation({
               screen showed neither until now. */}
           {supplierCost !== null ? (
             <span className="text-[15px] font-medium text-[var(--brand-text,inherit)]">
-              {formatCents(supplierCost)}
+              {formatMoney(supplierCost, currency)}
             </span>
           ) : null}
           {supplierCost !== null ? <span aria-hidden="true">·</span> : null}
@@ -845,7 +858,7 @@ export function CreationStation({
             {!problem && (
               <p className="mt-2 text-center text-[12px] text-zinc-500">
                 {usedPlacements(current).join(" and ")} · {color}
-                {variant?.costInCents != null && ` · costs $${(variant.costInCents / 100).toFixed(2)}`}
+                {variant?.costInCents != null && ` · costs ${formatMoney(variant.costInCents, currency)}`}
                 {/* THE SIZE IS NOT IN THAT LIST. It read "front and back · Ash ·
                     2XL", which Sean read the way anyone would: as a 2XL product.
                     The size chosen here is the canvas the design was laid out

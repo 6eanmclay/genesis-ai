@@ -16,6 +16,9 @@ import type { BalanceAmount, MerchantFinancials, PayoutDestination, PayoutRecord
 /** Money the way a merchant reads it, per currency, because providers report per currency. */
 export function formatAmount(amount: BalanceAmount): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: amount.currency }).format(
+    // MONEY-SWEEP OK: the PROVIDER's own per-currency balance carries its
+    // currency and it is used here; only the locale is fixed. The store's
+    // currency would be the wrong answer, not a missing one.
     amount.amountInCents / 100,
   );
 }

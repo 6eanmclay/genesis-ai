@@ -318,6 +318,7 @@ export default async function CreationStationPage({
     return (
       <CreationStationClient
         slug={slug}
+        currency={store.currency}
         garment={garment}
         assets={await artworkFor(store.id)}
         blanks={await blankImagesFor(provider, store.id, garment.externalProductId)}
@@ -384,6 +385,7 @@ export default async function CreationStationPage({
     return (
       <CreationStationClient
         slug={slug}
+        currency={store.currency}
         garment={shown[0]}
         assets={await artworkFor(store.id)}
         blanks={await blankImagesFor(provider, store.id, shown[0].externalProductId)}

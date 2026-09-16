@@ -68,10 +68,24 @@ export interface Garment {
   printAreas: PrintArea[];
 }
 
-/** Cents as money, for a screen. Pure, and the one place this is spelled. */
-export function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+// ============ formatCents IS GONE, ON PURPOSE (2026-09-16) =============
+//
+// It lived here and said: "Cents as money, for a screen. Pure, and the one
+// place this is spelled." It was neither the one place nor currency-aware:
+//
+//   export function formatCents(cents: number) { return `$${...}` }
+//
+// THE NAME MEANT TWO DIFFERENT CONTRACTS. app/dashboard/understanding/page.tsx,
+// app/j4/J4Surface.tsx and lib/j4/understandingGroups.ts each declare
+// `const formatCents = formatMoney` — two arguments, currency-aware. This one
+// exported a one-argument function that always said dollars, and the Studio
+// imported it. Same name, same repository, opposite behaviour, and the import
+// line is the only thing that decided which a caller got.
+//
+// So it is deleted rather than renamed. lib/money.ts is the one place a price
+// becomes a string; a second spelling of that job is what E26 was.
+
+
 
 /**
  * The product's name in the words a person would use for it — pure.

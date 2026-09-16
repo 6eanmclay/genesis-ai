@@ -58,6 +58,8 @@ interface StoreReturnAddress {
 }
 
 function money(cents: number, currency: string): string {
+  // MONEY-SWEEP OK: the order's real currency is passed in and used; only the
+  // LOCALE is fixed, so a packing slip reads the same wherever it is printed.
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
 

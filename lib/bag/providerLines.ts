@@ -106,6 +106,9 @@ export interface PaypalAmount {
   };
 }
 
+// MONEY-SWEEP OK: the decimal string PayPal's own API requires, never read by
+// a person. The currency travels beside it as currency_code — same reason
+// app/store/[slug]/actions.ts is exempt.
 const money = (cents: number): string => (cents / 100).toFixed(2);
 
 /**

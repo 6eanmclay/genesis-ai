@@ -217,6 +217,65 @@ const NOT_A_DISPLAY_STRING: Record<string, string> = {
   "lib/intelligence/insights.ts": "the same QuickBooks totals; its revenue line does use lib/money",
 };
 
+/**
+ * A single LINE that converts cents and is not a display string.
+ *
+ * ============ WHY THIS EXISTS AND WHY IT IS NOT AN EXEMPTION (2026-09-16) ===
+ *
+ * E26 named six remaining sweep hits and classified them: two were the real
+ * bug and four were not leaks at all — a form-field unit conversion, PayPal's
+ * required decimal, and two Intl.NumberFormat calls that take a REAL currency
+ * and hardcode only the `en-US` locale.
+ *
+ * It refused to put those four in NOT_A_DISPLAY_STRING, and it was right:
+ * "An exemption stops the sweep watching a file, and the two Intl call sites
+ * genuinely do turn cents into a display string — exempting them would mean a
+ * future hardcoded currency" goes unseen. So it left the suite FAILING.
+ *
+ * That is the other half of the same trap. E26's own amendment records it:
+ * "An accepted-red suite hides everything that lands behind it, and three more
+ * leaks had." A red suite blinds the whole repository rather than one file.
+ *
+ * So the grain changes instead. The judgement is made at the LINE, in the
+ * source, where a reviewer reads it — not in a list in this file that blinds
+ * everything around it. Every other line in these files is still swept.
+ *
+ * A marker must carry a REASON, and every marker is checked below for still
+ * guarding a real conversion, so a stale one fails rather than lingering.
+ */
+const MARKER = /^\s*\/\/\s*MONEY-SWEEP OK:\s*\S/;
+const CONVERTS = /(InCents|cents)\s*\/\s*100/;
+/** Any `//` line — a marker's reason is allowed to need more than one. */
+const COMMENT = /^\s*\/\//;
+
+/**
+ * The first line below `i` that is real code, skipping blanks and the rest of
+ * the marker's own comment block.
+ *
+ * A reason worth writing rarely fits on one line, and the first version of this
+ * read the line immediately after the marker — which was the SECOND line of the
+ * reason. Every marker then reported itself as guarding a comment.
+ */
+function codeBelow(lines: string[], i: number): string {
+  for (let j = i + 1; j < lines.length; j++) {
+    const line = lines[j];
+    if (line.trim() === "" || COMMENT.test(line)) continue;
+    return line.trim();
+  }
+  return "";
+}
+
+/** Whether the contiguous comment block directly above `n` carries a marker. */
+function markedAbove(lines: string[], n: number): boolean {
+  for (let j = n - 2; j >= 0; j--) {
+    const line = lines[j];
+    if (line.trim() === "") continue;
+    if (!COMMENT.test(line)) return false;
+    if (MARKER.test(line)) return true;
+  }
+  return false;
+}
+
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(join(process.cwd(), dir), { withFileTypes: true })) {
@@ -231,27 +290,58 @@ const swept = ROOTS.flatMap(walk);
 assert("the sweep actually found files to check", swept.length > 20, String(swept.length));
 
 const leaks: string[] = [];
+/** Every marked line found, so a stale marker can be reported below. */
+const marked: { file: string; n: number; why: string; guards: string }[] = [];
 for (const file of swept) {
   // The one place that is SUPPOSED to convert. Excluded by name rather than by
   // the allowlist above, because it is not an exemption — it is the rule.
   if (file === "lib/money.ts") continue;
   if (NOT_A_DISPLAY_STRING[file]) continue;
-  const offenders = readFileSync(join(process.cwd(), file), "utf8")
-    .split("\n")
+  const raw = readFileSync(join(process.cwd(), file), "utf8").split("\n");
+
+  // Every marker in this file, whether or not it guards anything — a marker
+  // that guards nothing has to be able to fail, so it is collected here rather
+  // than only when an offending line happens to find it.
+  raw.forEach((line, i) => {
+    if (!MARKER.test(line)) return;
+    marked.push({
+      file,
+      n: i + 1,
+      why: line.trim().replace(/^\/\/\s*MONEY-SWEEP OK:\s*/, ""),
+      // What it claims to be guarding: the next line that is real code.
+      guards: codeBelow(raw, i),
+    });
+  });
+
+  const offenders = raw
     .map((line, i) => ({ line: line.trim(), n: i + 1 }))
     .filter(
-      (l) =>
-        /(InCents|cents)\s*\/\s*100/.test(l.line) &&
-        !l.line.startsWith("//") &&
-        !l.line.startsWith("*")
+      (l) => CONVERTS.test(l.line) && !l.line.startsWith("//") && !l.line.startsWith("*")
     );
-  for (const o of offenders) leaks.push(`${file}:${o.n}  ${o.line}`);
+  for (const o of offenders) {
+    // MARKED AT THE SITE, one line above. Not a file exemption: everything else
+    // in this file is still swept.
+    if (markedAbove(raw, o.n)) continue;
+    leaks.push(`${file}:${o.n}  ${o.line}`);
+  }
 }
 assert(
   "money becomes a string in exactly one place, across the whole owner and customer path",
   leaks.length === 0,
   leaks.join("\n      ")
 );
+
+// AND EVERY LINE MARKER STAYS HONEST, for the same reason the file allowlist
+// does. A marker whose line no longer converts anything is a hole sitting open
+// in the middle of a swept file, waiting for the next edit to slide into it.
+assert("the line markers are actually in use", marked.length > 0, `${marked.length}`);
+for (const m of marked) {
+  assert(
+    `the marker at ${m.file}:${m.n} still guards a conversion`,
+    CONVERTS.test(m.guards),
+    `guards ${JSON.stringify(m.guards.slice(0, 70))} — reason given: ${m.why}`,
+  );
+}
 
 // And the allowlist stays honest: an entry for a file that no longer converts
 // anything is a stale exemption, and the next real leak would hide behind it.
