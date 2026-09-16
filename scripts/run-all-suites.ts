@@ -112,7 +112,17 @@ const LANES: Lane[] = [
 // nothing to do with what it tests. A fixture that names a member of a list
 // rots the moment the list changes.
 export const ACCEPTED_FAILURES: Record<string, string> = {
-  "test-isolation": "pre-existing; Sean: leave the 51/52 test-isolation issue untouched",
+  // test-isolation: REMOVED 2026-09-16. It was accepted because its section 5
+  // reported two suites as unguarded. Both were FALSE POSITIVES — source-shape
+  // tests that carry the database client's name inside a regex literal — and
+  // the same text matching was hiding fifteen suites that really do load the
+  // client through a dynamic import. The check now asks about imports, the
+  // suite is green, and accepting it would hide the one thing standing between
+  // a test run and a real merchant's catalogue.
+  // store-currency: REMOVED 2026-09-16. E26 is closed: garment.ts's
+  // dollars-only formatCents is deleted and the Creation Station takes a
+  // required currency. This entry is the case study in its own warning below —
+  // three further currency leaks hid behind it while it sat accepted.
   // rooms: REMOVED 2026-09-09. E25 is resolved — Sean decided the count is
   // five, so GENESIS_SURFACES.md, navConfig.ts's comment and the suite were
   // updated in that order and verify-rooms is green. An accepted failure left
@@ -134,7 +144,6 @@ export const ACCEPTED_FAILURES: Record<string, string> = {
   // masters and the rule that the visor gets nothing.
   "j4-assets": "EXTERNAL_BLOCKERS.md E28 - the runtime J4 predates the canonical three-asset system; needs a re-render carrying the diamond helmet insignia and the signature ear mark",
   "j4-calm": "EXTERNAL_BLOCKERS.md E27 - the new J4 render is not the calm/black-ground artwork the persistent surfaces are meant to use; awaiting a calm master from Sean",
-  "store-currency": "EXTERNAL_BLOCKERS.md E26 — hardcoded $ in the Creation Station, which is the Studio reference implementation and out of scope here",
 };
 
 function allSuites(): string[] {
