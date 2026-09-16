@@ -86,7 +86,6 @@ export function SubmitButton({
     logClientEvent({
       storeId: trackPerf.storeId,
       name: "perf.action_pending",
-      category: "performance",
       attemptKey: trackPerf.attemptKey,
       durationMs,
       metadata: { label: trackPerf.label, feltSlow: durationMs > FELT_SLOW_MS },

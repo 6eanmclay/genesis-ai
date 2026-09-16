@@ -520,7 +520,6 @@ export function DashboardShell({
     logClientEvent({
       storeId,
       name: "nav.section_view",
-      category: "navigation",
       metadata: { section: pathname, fromSection },
     });
     // Only the pathname itself should re-trigger this — storeId is stable
@@ -538,7 +537,6 @@ export function DashboardShell({
     logClientEvent({
       storeId,
       name: focusedItem ? "focus.route_resolved" : "focus.route_unresolved",
-      category: "navigation",
       attemptKey: focusId,
       outcome: focusedItem ? "success" : "failure",
       metadata: { section: currentSecondarySection.key },
