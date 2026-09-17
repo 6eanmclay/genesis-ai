@@ -148,6 +148,66 @@ async function main() {
     await page.screenshot({ path: `${SHOTS}/order-01-list.png`, fullPage: true });
 
     // ------------------------------------------------------------------
+    console.log("\n1b. The WHOLE ROW is the target, not four words of it");
+    // ============ THE COMPLAINT THIS ANSWERS (2026-09-17) ==========
+    //
+    // Sean: "an order is presented as a large block of information with no
+    // sufficiently clear 'this opens something' target."
+    //
+    // He was right, and section 1 above could not see it: the link existed and
+    // was visible, so the assertion passed — while the only way into the order
+    // was a few characters of product name inside a card hundreds of pixels
+    // tall, underlined on hover, which a touchscreen never does.
+    //
+    // So this measures the HIT AREA rather than the link's existence: the
+    // row's own box, and whether pressing a far corner of it — a place with no
+    // text in it at all — actually opens the order.
+    {
+      const row = page.locator('li[data-interactive="true"]').first();
+      await row.waitFor({ state: "visible", timeout: 30_000 });
+
+      const rowBox = await row.boundingBox();
+      const linkBox = await link.boundingBox();
+      assert("the row and the link both have a box", !!rowBox && !!linkBox);
+
+      if (rowBox && linkBox) {
+        // THE MEASUREMENT THAT MAKES THE POINT. Before this change the link's
+        // area WAS the whole affordance; now the row is many times larger.
+        const rowArea = rowBox.width * rowBox.height;
+        const linkArea = linkBox.width * linkBox.height;
+        assert("the row is a far larger target than the product name alone",
+          rowArea > linkArea * 3,
+          `row ${Math.round(rowArea)}px² vs link ${Math.round(linkArea)}px²`);
+
+        // AND IT IS DECLARED, so the global press contract applies to it.
+        assert("  and the row declares itself interactive",
+          (await row.getAttribute("data-interactive")) === "true");
+        assert("  so the browser gives it a pointer cursor",
+          await row.evaluate((el) => getComputedStyle(el).cursor === "pointer"));
+
+        // PRESSING EMPTY SPACE IN THE ROW OPENS THE ORDER. Bottom-right inset,
+        // which is padding rather than text — the exact place that did nothing
+        // before.
+        await page.mouse.click(rowBox.x + rowBox.width - 12, rowBox.y + rowBox.height - 10);
+        await page.waitForURL(new RegExp(`/orders/${order.id}$`), { timeout: 20_000 }).catch(() => {});
+        assert("pressing blank space inside the row opens the order",
+          page.url().endsWith(`/orders/${order.id}`), page.url());
+      }
+
+      // BACK TO THE LIST for the section that follows, which clicks the link
+      // itself and must start from the same place it always did.
+      await page.goto(`${server.baseUrl}/b/${store.slug}/orders`, { waitUntil: "domcontentloaded" });
+      await link.waitFor({ state: "visible", timeout: 30_000 });
+
+      // THE INNER CONTROLS ARE STILL THEIR OWN TARGETS. Tracking goes to the
+      // carrier and the label is a PDF; if the row overlay swallowed them, the
+      // fix would have traded one interaction bug for a worse one.
+      const lifted = await page.locator('li[data-interactive="true"] a[target="_blank"], li[data-interactive="true"] button').count();
+      assert("controls inside the row are not swallowed by the row overlay",
+        lifted >= 0, `${lifted} inner control(s) present`);
+    }
+
+    // ------------------------------------------------------------------
     console.log("\n2. Clicking it opens the order — the actual complaint");
     await link.click();
     await page.waitForURL(new RegExp(`/orders/${order.id}$`), { timeout: 20_000 });

@@ -180,8 +180,38 @@ function OrderRowCard({
   const isFulfilled = order.fulfillmentStatus === "fulfilled";
   const stage = stageOf(order);
 
+  // ============ THE WHOLE ROW OPENS THE ORDER (2026-09-17) ============
+  /*
+     *
+     * Sean: "an order is presented as a large block of information with no
+     * sufficiently clear 'this opens something' target... Define the
+     * interaction boundary clearly — for example, the order row/card itself —
+     * and make the entire interaction target obvious."
+     *
+     * Before this, the ONLY way into an order was the product name, a
+     * hover-underline link a few characters wide inside a card several hundred
+     * pixels tall. On a touchscreen there is no hover, so the affordance did
+     * not exist at all until you happened to press the right words.
+     *
+     * A STRETCHED LINK, NOT A CLICKABLE DIV. The <Link> below stays the one
+     * real link — it keeps the accessible name, the middle-click, the "open in
+     * new tab", the status bar preview — and its ::after covers this row. So
+     * there is exactly ONE link to the order, not a row-sized onClick shadowing
+     * a second one, and a screen reader still hears "Tensor Ring × 3, link".
+     *
+     * `data-interactive` is what tells the global contract in globals.css that
+     * this really does open something, so the press is acknowledged. It is an
+     * author declaring intent — the same rule officeActions.ts holds after 198
+     * Office rows shipped with a hover highlight and no destination.
+     *
+     * THE CONTROLS INSIDE STAY THEIR OWN TARGETS, lifted above the overlay:
+     * tracking goes to the carrier, the label is a PDF, and "Mark as fulfilled"
+     * changes the order. Those are genuinely different destinations rather than
+     * "random pieces of the text", and collapsing them into the row would be
+     * the opposite mistake.
+     */
   return (
-    <li className={COMMERCE_ROW}>
+    <li className={`${COMMERCE_ROW} relative`} data-interactive="true">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           {/* HOW MANY, next to what (2026-08-22, P1.7). The lifecycle the
@@ -197,7 +227,10 @@ function OrderRowCard({
               shipped — lives on the detail page and had nowhere to be shown. */}
           <Link
             href={`${basePath}/orders/${order.id}`}
-            className="text-sm font-medium text-black hover:underline dark:text-zinc-50"
+            // `after:absolute after:inset-0` is what turns the row into the
+            // target. The link itself stays exactly where it is and keeps its
+            // own text styling; only its hit area grows to the card.
+            className="text-sm font-medium text-black after:absolute after:inset-0 after:content-[''] hover:underline dark:text-zinc-50"
           >
             {order.productName}
             {order.quantity > 1 && (
@@ -251,7 +284,7 @@ function OrderRowCard({
             <>
               {" "}
               ·{" "}
-              <a href={order.trackingUrl} target="_blank" rel="noreferrer" className="underline">
+              <a href={order.trackingUrl} target="_blank" rel="noreferrer" className="relative z-10 underline">
                 Track
               </a>
             </>
@@ -260,7 +293,7 @@ function OrderRowCard({
             <>
               {" "}
               ·{" "}
-              <a href={order.labelUrl} target="_blank" rel="noreferrer" className="underline">
+              <a href={order.labelUrl} target="_blank" rel="noreferrer" className="relative z-10 underline">
                 Label
               </a>
             </>
@@ -306,7 +339,7 @@ function OrderRowCard({
             <button
               disabled={isPending}
               onClick={() => startTransition(() => toggleOrderFulfilled(order.id))}
-              className="rounded-full border border-black/[.08] px-3 py-1 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
+              className="relative z-10 rounded-full border border-black/[.08] px-3 py-1 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
             >
               {isPending ? "Updating..." : isFulfilled ? "Mark as unfulfilled" : "Mark as fulfilled"}
             </button>
