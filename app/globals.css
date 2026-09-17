@@ -411,3 +411,116 @@ body {
     transform: scaleY(1) !important;
   }
 }
+
+
+/* ============ THE INTERACTION FEEDBACK CONTRACT (2026-09-17) ============
+ *
+ * Sean: "Anything that is interactive must visibly acknowledge the interaction
+ * immediately... a user should never tap something and be left wondering
+ * whether Genesis received the tap." And, in the same breath, the inverse: "do
+ * not add fake click feedback to non-interactive text or decorative elements."
+ *
+ * ---- WHY THIS IS CSS, AND HERE RATHER THAN IN 95 FILES ----
+ *
+ * Measured before writing a line: `hover:` appears 332 times across 95
+ * component files; `active:` appears 32 times across 19. Hover does nothing on
+ * a touchscreen, so on the device most owners actually use, the overwhelming
+ * majority of Genesis's controls acknowledged nothing at all.
+ *
+ * There is no shared Button primitive to fix this in — SubmitButton is the
+ * closest thing and answers a different question (the PENDING state, which
+ * arrives after the server action starts). So the contract is established once,
+ * in the cascade, keyed on what an element IS rather than on a class somebody
+ * remembered. A new screen inherits it by using a <button>.
+ *
+ * ---- NO DELAY, NO TIMER, NO JAVASCRIPT ----
+ *
+ * `:active` is applied by the browser on pointer-down, before any handler runs
+ * and before navigation begins. There is nothing to schedule.
+ * `touch-action: manipulation` additionally removes the legacy 300ms
+ * double-tap wait, which makes the press land sooner rather than faking it.
+ *
+ * ---- SELECTOR SHAPE, LEARNED THE HARD WAY ----
+ *
+ * The first version wrapped everything in :where() for zero specificity and
+ * split the :not() across lines. It applied to NOTHING — the browser reported
+ * touch-action:auto on the very button it was meant to govern, and the suite
+ * caught it before this was committed. These are plain selectors on one line.
+ *
+ * Specificity is deliberately low (one class-equivalent) so a component that
+ * genuinely needs a different pressed state can still say so.
+ *
+ * ---- AND NOTHING DECORATIVE GETS A COSTUME ----
+ *
+ * Every selector is something interactive by its own semantics — a button, a
+ * link with an href, an explicit ARIA role, a summary. A <div> stays inert
+ * unless it has declared itself a control with data-interactive, which is the
+ * same rule lib/j4/officeActions.ts enforces for Office rows after 198 shipped
+ * with a hover highlight and no destination. A disabled control is excluded:
+ * acknowledging a press that will do nothing is the same lie reversed.
+ */
+button, [role="button"], [role="tab"], [role="menuitem"], summary,
+input[type="submit"], input[type="button"], input[type="reset"],
+[data-interactive="true"] {
+  touch-action: manipulation;
+}
+
+button:not(:disabled):not([aria-disabled="true"]):active,
+[role="button"]:not([aria-disabled="true"]):active,
+[role="tab"]:not([aria-disabled="true"]):active,
+[role="menuitem"]:not([aria-disabled="true"]):active,
+summary:active,
+input[type="submit"]:not(:disabled):active,
+input[type="button"]:not(:disabled):active,
+input[type="reset"]:not(:disabled):active {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+/* A row or card that opens something is a real control and says so with
+ * data-interactive. Adding the attribute is the author declaring "this opens
+ * something" — exactly the boundary Orders needed, and the reason this is not
+ * a blanket rule on anything that happens to look like a card. */
+[data-interactive="true"] {
+  cursor: pointer;
+}
+[data-interactive="true"]:active {
+  transform: scale(0.99);
+  opacity: 0.9;
+}
+
+/* Inline links get opacity only. A link inside a sentence that scaled on press
+ * would shift the text around it; the press is acknowledged either way. */
+a[href] {
+  touch-action: manipulation;
+}
+a[href]:active {
+  opacity: 0.7;
+}
+
+/* Keyboard users get the same acknowledgement the pointer gets. Six
+ * focus-visible rules existed in the whole application before this. */
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[role="menuitem"]:focus-visible,
+summary:focus-visible,
+a[href]:focus-visible,
+[data-interactive="true"]:focus-visible {
+  outline: 2px solid var(--brand-accent, #2563eb);
+  outline-offset: 2px;
+}
+
+/* REDUCED MOTION KEEPS THE FEEDBACK AND DROPS THE ANIMATION. Removing the
+ * acknowledgement would take the contract away from the people most likely to
+ * need it; what they asked not to have is motion. So the state change becomes
+ * instant and opacity-only. */
+@media (prefers-reduced-motion: reduce) {
+  button:active, [role="button"]:active, [role="tab"]:active,
+  [role="menuitem"]:active, summary:active,
+  input[type="submit"]:active, input[type="button"]:active,
+  input[type="reset"]:active, [data-interactive="true"]:active {
+    transform: none;
+    opacity: 0.8;
+  }
+}
