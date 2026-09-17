@@ -292,19 +292,52 @@ So the honest state is: a Spocket API is asserted by others and documented by
 nobody we can cite. **Assuming an API-key model on that basis is exactly the
 assumption Sean's instruction forbids.**
 
-### What would establish them
+### RESOLVED 2026-09-17 — and they resolved differently
 
-Neither needs engineering yet. Both need a first-party answer:
+**Zendrop: there IS a supported path, and it needs no approval.**
 
-| provider | the question |
+First-party documentation states it plainly: *"you generate an MCP access token
+inside Zendrop, or connect through OAuth — either way, it's a one-time step"*,
+and *"access is controlled by a token you generate, and you can revoke it at any
+time."* The endpoint is `POST https://app.zendrop.com/mcp/v1` with
+`Authorization: Bearer <token>`.
+
+| | |
 |---|---|
-| Zendrop | how does an application obtain OAuth client credentials — self-serve in an account, or partner/approval? And does it deliver webhooks? |
-| Spocket | is there a first-party API at all, and what are its auth model, endpoints and access requirements? A Spocket account with developer settings visible would answer it |
+| **merchant-generated token** | **SELF-SERVE inside a Zendrop account. No partner programme, no application, no approval.** Revocable by the merchant |
+| OAuth 2.0 app | offered and "recommended for apps", but **how a platform registers an OAuth client is still undocumented first-party** — no registration URL and no statement either way |
+| plan | "get started free. Some features may require a paid plan depending on your store's volume and needs" |
+| webhooks | **still not mentioned anywhere.** Unestablished, not absent |
 
-Once answered, each becomes an ordinary connector: a module in
-`lib/integrations/` and one line in the registry, with `configured()` and — if
-the provider signs deliveries — `webhooks`, both already governed by
-`verify-configured-truthfulness` and `verify-webhook-verifier-contract`.
+**That makes Zendrop buildable in a shape Genesis already has.** A
+merchant-supplied token is exactly `authKind: "api_key"` — "the credentials are
+the merchant's own", no `configured()`, the Twilio shape that
+`verify-configured-truthfulness` already governs. The undocumented OAuth-app
+path is not needed for it.
+
+**It is still NOT built, and the reason is not the shape.** Nobody here has a
+Zendrop account, so a connector written now could not be exercised against the
+real API even once — and gap 13's judgement applies exactly: *an unverifiable
+implementation is worse than none because it looks finished.* **What is needed:
+a Zendrop account and a token generated in it.** That is the whole dependency.
+
+**Spocket: there is no path, and that is the finding.**
+
+Spocket's own integrations page lists Shopify, WooCommerce, Amazon, Squarespace,
+eBay, BigCommerce, Ecwid, AliExpress, Wix, Square and Alibaba — **and makes no
+mention of a public API, API keys, a developer programme, or any custom
+integration route** for a platform not on that list. Genesis is not on that list.
+
+So this is not a credential waiting to be supplied. There is nothing published
+to connect to. The only legitimate route left is asking Spocket directly whether
+a partner API exists — and **the alternatives are explicitly ruled out**: Sean,
+2026-09-17, *"Do not create unofficial/browser/scraping integrations to force
+either one into Genesis."*
+
+| provider | state | what would move it |
+|---|---|---|
+| **Zendrop** | **shape established, unverifiable** | a Zendrop account + a generated token |
+| **Spocket** | **no published integration path** | a first-party answer from Spocket about a partner API; nothing else is permitted |
 
 ---
 
@@ -312,13 +345,34 @@ the provider signs deliveries — `webhooks`, both already governed by
 `PRINTFUL_CLIENT_ID`/`_SECRET` are set and six stores are connected and syncing,
 so `scripts/check-printful-economics-live.ts` can run today.
 
-**Classified 2026-09-17 as ACTIONABLE — AWAITING OWNER AUTHORIZATION**, which is
-its own category and deliberately not "credential-blocked". Sean: "this is
-different because the credentials already exist, but it makes a live production
-API call. Do not run it without my explicit authorization."
+**AUTHORISED AND RUN 2026-09-17. It cannot complete from a developer machine,
+and now we know exactly why.**
 
-So it sits in no queue and needs nothing bought or registered. It needs one
-word from Sean, and until then it is not run.
+The script behaved correctly and refused nothing it should have: it found **6
+Printful connections in production, 4 of them Genesis-owned**, and skipped the
+two belonging to a real customer — "making API calls on somebody's account to
+satisfy a test is not something to do because it is technically possible."
+
+For all four it reported:
+
+```
+economics(): ok, 0 statements in USD
+search(): unavailable — INTEGRATION_ENCRYPTION_KEY is not set —
+          required to store or read integration credentials.
+```
+
+**The blocker is not the Printful credentials, which exist.** It is
+`INTEGRATION_ENCRYPTION_KEY`, needed to decrypt the per-store OAuth tokens
+stored in `StoreIntegration.credentials`. That key is a Vercel Sensitive
+variable and **unrecoverable from Vercel by reading it back** — already recorded
+in its own right, along with the standing rule not to rotate it or copy it to
+Preview.
+
+So D4's real dependency, corrected by running it: **the check needs
+`INTEGRATION_ENCRYPTION_KEY` present in the process that runs it.** Anywhere
+that key is absent, it can reach the database and not the supplier. Nothing in
+the code is wrong and nothing further can be learned about `economics()` from
+here.
 
 Each connector's credential requirement is read from its own `configured()` and
 asserted true-and-false by `verify-configured-truthfulness`, so the variable
