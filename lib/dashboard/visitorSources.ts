@@ -61,6 +61,28 @@ export interface VisitSourceCount {
   visits: number;
 }
 
+/**
+ * One page visitors actually arrived on, and how many arrived there.
+ *
+ * ============ CAPTURED SINCE 759459b, READ BY NOTHING (2026-09-17) ======
+ *
+ * `StoreVisit.landingPath` has been written on every arrival since the
+ * attribution pipeline shipped — 933 of them in production — and no surface
+ * has ever read it. It is the only field this system holds that answers "and
+ * then what", which is why it is the second half of the traffic work.
+ *
+ * PATH ONLY, and that is the recorder's rule rather than this one's: the
+ * column's own comment says "Path only, for the same reason source is host
+ * only." A landing URL would carry query strings somebody else composed.
+ *
+ * NOT RANKED AS PERFORMANCE. This says where arrivals landed, not which page
+ * is "best" — Genesis knows nothing about what any of them cost to promote.
+ */
+export interface LandingPathCount {
+  path: string;
+  visits: number;
+}
+
 /** Orders that carry frozen attribution, by the kind and host that produced them. */
 export interface OrderSourceCount {
   kind: AttributionKind;
@@ -82,6 +104,14 @@ export interface VisitorSources {
   byKind: VisitKindCount[];
   /** Descending by visits. Only visits that named a source appear here. */
   sources: VisitSourceCount[];
+  /**
+   * Where arrivals actually landed, descending by visits.
+   *
+   * Every visit has one, including direct ones — a visitor with no referrer
+   * still landed somewhere, so unlike `sources` this list covers the whole
+   * population rather than the nameable part of it.
+   */
+  landingPaths: LandingPathCount[];
   /** Every order this store has, attributed or not. */
   totalOrders: number;
   /** Orders carrying attributionKind. See rule 1: never counted on the source. */
@@ -102,7 +132,7 @@ function isAttributionKind(value: string): value is AttributionKind {
  * this client and refuses an unscoped one outright.
  */
 export async function getVisitorSources(storeId: string): Promise<VisitorSources> {
-  const [window, kindRows, sourceRows, totalOrders, orderRows] = await Promise.all([
+  const [window, kindRows, sourceRows, totalOrders, orderRows, landingRows] = await Promise.all([
     prisma.storeVisit.aggregate({
       where: { storeId },
       _count: { _all: true },
@@ -131,6 +161,14 @@ export async function getVisitorSources(storeId: string): Promise<VisitorSources
       where: { storeId, attributionKind: { not: null } },
       _count: { _all: true },
     }),
+    // NO `not: null` HERE, unlike sourceRows. Every visit landed somewhere,
+    // including a direct one — filtering would quietly drop the majority of
+    // this store's traffic from the only list that says where people went.
+    prisma.storeVisit.groupBy({
+      by: ["landingPath"],
+      where: { storeId },
+      _count: { _all: true },
+    }),
   ]);
 
   const byKind: VisitKindCount[] = kindRows
@@ -147,6 +185,10 @@ export async function getVisitorSources(storeId: string): Promise<VisitorSources
     }))
     .sort((a, b) => b.visits - a.visits || a.source.localeCompare(b.source));
 
+  const landingPaths: LandingPathCount[] = landingRows
+    .map((row) => ({ path: row.landingPath, visits: row._count._all }))
+    .sort((a, b) => b.visits - a.visits || a.path.localeCompare(b.path));
+
   const orderSources: OrderSourceCount[] = orderRows
     .filter((row) => row.attributionKind !== null && isAttributionKind(row.attributionKind))
     .map((row) => ({
@@ -162,6 +204,7 @@ export async function getVisitorSources(storeId: string): Promise<VisitorSources
     lastSeenAt: window._max.lastSeenAt ?? null,
     byKind,
     sources,
+    landingPaths,
     totalOrders,
     // Summed from the same rows the breakdown is built from, so the total and
     // the list can never disagree with each other.

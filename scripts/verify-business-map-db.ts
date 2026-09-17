@@ -335,15 +335,34 @@ async function main(): Promise<void> {
     //
     // What must not exist is a DOMAIN or an EDGE KIND for these things,
     // because a registry entry is what would actually put one on the map.
-    for (const invented of ["engagement", "traffic", "impressions", "reach", "followers", "content"]) {
+    // ============ "traffic" LEFT THIS LIST ON 2026-09-17 ============
+    //
+    // The rule is unchanged and is the reason the other five stay: a domain or
+    // edge kind must not exist for something no data backs. Traffic stopped
+    // being unbacked. `StoreVisit` has recorded every storefront arrival since
+    // 759459b (2026-09-01) and `Order` carries attribution frozen at purchase,
+    // so a `traffic` domain now rests on counted rows exactly as `commerce`
+    // does — and section "Traffic is drawn only from real visits" below proves
+    // it against real ones.
+    //
+    // THE OTHER FIVE ARE NOT IN THE SAME POSITION and must not be let out with
+    // it. Engagement, impressions, reach, followers and content are the
+    // PROVIDER's numbers; no connector supplies them and no table holds them.
+    // The distinction is the whole point of traffic being its own domain rather
+    // than part of `social`: Genesis sees a facebook.com referral because
+    // Genesis served the page, not because anyone connected Facebook.
+    for (const invented of ["engagement", "impressions", "reach", "followers", "content"]) {
       assert(`no domain models ${invented}`,
         !(MAP_DOMAINS as readonly string[]).some((d) => d.includes(invented)), invented);
       assert(`and no edge kind joins anything by ${invented}`,
         !Object.keys(MAP_EDGE_KINDS).some((k) => k.includes(invented)), invented);
     }
     // Nor may a node claim one, which is the runtime half of the same rule.
+    // `traffic` is out of this regex for the reason above; the rest stay,
+    // because a node claiming an engagement or follower count would still be
+    // claiming a provider's number nothing supplies.
     assert("and no node on a real business claims any of them",
-      map.nodes.every((n) => !/engagement|traffic|impressions|followers/i.test(n.label)),
+      map.nodes.every((n) => !/engagement|impressions|followers/i.test(n.label)),
       JSON.stringify(map.nodes.map((n) => n.label)));
   }
 
@@ -384,6 +403,16 @@ async function main(): Promise<void> {
     await prismaSystem.storeIntegration.create({
       data: { storeId: store.id, provider: "PRINTFUL", status: "CONNECTED", externalAccountId: `acct_r_${stamp}` },
     });
+    // A REAL ARRIVAL, so the traffic domain is wired from a row rather than
+    // declared and empty. Shaped like production, where direct_unknown is the
+    // majority kind and the referred minority carries a host.
+    await prismaSystem.storeVisit.create({
+      data: {
+        storeId: store.id, visitToken: `vt-reg-${stamp}`,
+        attributionKind: "observed_referral", source: "m.facebook.com",
+        evidence: "Referer host", landingPath: `/store/${store.slug}`,
+      },
+    });
     await prismaSystem.belief.create({
       data: {
         storeId: store.id, topicKey: `reg-${stamp}`, claim: "A pattern.", category: "insight_recurrence",
@@ -412,6 +441,108 @@ async function main(): Promise<void> {
       map.nodes.every((n) => (MAP_DOMAINS as readonly string[]).includes(n.domain)),
       JSON.stringify(map.nodes.filter((n) => !(MAP_DOMAINS as readonly string[]).includes(n.domain)).map((n) => n.domain)));
     void user;
+  }
+
+  // ======================================================================
+  console.log("\n=== 7a2. Traffic is drawn only from real visits ===\n");
+  // ======================================================================
+  //
+  // ============ THE SENTENCE THIS SECTION REPLACES ==================
+  //
+  // businessMap.ts used to justify having no traffic node by saying there was
+  // "no traffic attribution anywhere in the schema". That stopped being true on
+  // 2026-09-01 and the sentence went on justifying an absent node for sixteen
+  // days. So this asserts the node exists AND that every part of it rests on a
+  // row — the same bar `commerce` is held to.
+  //
+  // AND THAT IT NEEDS NO CONNECTION. The distinction Sean asked to be visible:
+  // a store with zero connected accounts still gets its traffic, because
+  // Genesis served the page.
+  {
+    const { store } = await makeStore();
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // A store with visits and NO connected anything.
+    const empty = await mapFor(store.id, store.slug, 3);
+    const emptyTraffic = empty.domains.find((d) => d.key === "traffic")!;
+    eq("before any visit, traffic is unknown", emptyTraffic.certainty, "unknown");
+    assert("  and says it fills on its own, not by connecting something",
+      /no account to connect/i.test(emptyTraffic.summary), emptyTraffic.summary);
+
+    await prismaSystem.storeVisit.createMany({
+      data: [
+        // THE MAJORITY KIND IN PRODUCTION (582 of 933). It must be shown.
+        {
+          storeId: store.id, visitToken: `vt-d1-${stamp}`, attributionKind: "direct_unknown",
+          source: null, evidence: "no Referer header", landingPath: `/store/${store.slug}`,
+        },
+        {
+          storeId: store.id, visitToken: `vt-d2-${stamp}`, attributionKind: "direct_unknown",
+          source: null, evidence: "no Referer header", landingPath: `/store/${store.slug}`,
+        },
+        // TWO FACEBOOK HOSTS THAT MUST STAY TWO. Production carries
+        // facebook.com, m.facebook.com, lm. and l. as four separate rows.
+        {
+          storeId: store.id, visitToken: `vt-f1-${stamp}`, attributionKind: "observed_referral",
+          source: "facebook.com", evidence: "Referer host", landingPath: `/store/${store.slug}`,
+        },
+        {
+          storeId: store.id, visitToken: `vt-f2-${stamp}`, attributionKind: "observed_referral",
+          source: "m.facebook.com", evidence: "Referer host", landingPath: `/store/${store.slug}/products/abc`,
+        },
+      ],
+    });
+
+    const map = await mapFor(store.id, store.slug, 3);
+    const traffic = map.domains.find((d) => d.key === "traffic")!;
+    const labels = traffic.nodes.map((n) => n.label);
+
+    assert("with visits, traffic is known", traffic.certainty === "known", traffic.certainty);
+    assert("  the total is the real count", labels.some((l) => l.startsWith("4 visit")), labels.join(" | "));
+
+    // RULE: direct_unknown IS SHOWN. It is the majority and hiding it would be
+    // the flattering picture rather than the true one.
+    assert("direct or unknown traffic is on the map", labels.some((l) => /Direct or unknown — 2/.test(l)),
+      labels.join(" | "));
+
+    // RULE: A HOST IS THE HOST IT IS.
+    assert("facebook.com is its own node", labels.some((l) => l.startsWith("facebook.com — 1")), labels.join(" | "));
+    assert("  and m.facebook.com is a separate one, never folded in",
+      labels.some((l) => l.startsWith("m.facebook.com — 1")), labels.join(" | "));
+
+    // LANDING PATHS, captured since 759459b and surfaced for the first time.
+    assert("where they landed is on the map",
+      labels.some((l) => l.startsWith(`/store/${store.slug} — 3`)), labels.join(" | "));
+    assert("  including a product page",
+      labels.some((l) => l.includes("/products/abc — 1")), labels.join(" | "));
+
+    // NOTHING INVENTED. No ratio, no ranking, no campaign that does not exist.
+    assert("no conversion rate is computed", !labels.some((l) => /%|rate|conversion/i.test(l)),
+      labels.join(" | "));
+    assert("  no channel is ranked as best", !labels.some((l) => /top|best|winning/i.test(l)),
+      labels.join(" | "));
+    assert("  and no campaign is claimed when none exists",
+      !labels.some((l) => /campaign/i.test(l)), labels.join(" | "));
+
+    // ORDERS ONLY WHEN GENUINELY ATTRIBUTED, and counted by KIND not source.
+    assert("with no attributed order, none is claimed",
+      !labels.some((l) => /traced to a visit/.test(l)), labels.join(" | "));
+
+    await prismaSystem.order.create({
+      data: {
+        storeId: store.id, productName: "Ring", quantity: 1, amountInCents: 1000,
+        buyerEmail: `t-${stamp}@example.test`, paymentProvider: "STRIPE",
+        externalOrderId: `cs_t_${stamp}`, status: "paid",
+        // ATTRIBUTED AS DIRECT, which carries a NULL source by design. Counting
+        // on attributionSource would miss this order entirely — rule 1.
+        attributionKind: "direct_unknown", attributionSource: null,
+        attributionEvidence: "no Referer header",
+      },
+    });
+    const after = await mapFor(store.id, store.slug, 3);
+    const afterLabels = after.domains.find((d) => d.key === "traffic")!.nodes.map((n) => n.label);
+    assert("an order attributed as DIRECT still counts, despite having no source",
+      afterLabels.some((l) => /1 order traced to a visit/.test(l)), afterLabels.join(" | "));
   }
 
   // ======================================================================

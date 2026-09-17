@@ -39,10 +39,46 @@ import { formatMoney } from "@/lib/money";
 // an edge when the underlying data/model supports it."
 //
 // So `Product → Order → Revenue` is drawn: OrderItem.productId is a real
-// column, and revenue is arithmetic over real orders. `TikTok → Content →
-// Engagement → Traffic` is NOT drawn at any strength, because there is no
-// social connector, no content entity and no traffic attribution anywhere in
-// the schema. Those stay unavailable until the entities exist.
+// column, and revenue is arithmetic over real orders.
+//
+// ============ CORRECTED 2026-09-17 ====================================
+//
+// This paragraph used to say `TikTok → Content → Engagement → Traffic` is not
+// drawn "because there is no social connector, no content entity and no
+// traffic attribution anywhere in the schema". Two of those three are still
+// true. **The third stopped being true on 2026-09-01**, when 759459b shipped
+// `StoreVisit` and froze attribution onto `Order` — and the sentence went on
+// justifying an absent node for sixteen days.
+//
+// So TRAFFIC IS NOW DRAWN, and only the part the data actually establishes:
+// a referring host, a landing path, and an order that carries the attribution
+// frozen at purchase. `TikTok → Content → Engagement` remains undrawn, because
+// a connector and a content entity still do not exist.
+//
+// The distinction this preserves is the one that made it its own domain rather
+// than part of `social`: Genesis knows a visitor arrived from facebook.com
+// because Genesis served the page, not because anybody connected Facebook.
+
+/**
+ * The three attribution kinds, in the owner's words.
+ *
+ * `direct_unknown` is deliberately not called "Direct" alone. A visitor with no
+ * Referer header might have typed the address, followed a bookmark, or come
+ * from an app that strips it — the recorder cannot tell, and the label must not
+ * claim it can. classify.ts names the kind that way for the same reason.
+ */
+const ATTRIBUTION_KIND_MAP_LABEL: Record<string, string> = {
+  explicit_tracking: "From a tracked link",
+  observed_referral: "Referred by another site",
+  direct_unknown: "Direct or unknown",
+};
+
+const ATTRIBUTION_KIND_MAP_DETAIL: Record<string, string> = {
+  explicit_tracking: "The link itself named where it came from.",
+  observed_referral: "Another site sent them, and the browser said which.",
+  direct_unknown:
+    "No referrer was sent. Typed, bookmarked, or from an app that strips it — Genesis cannot tell which, and does not guess.",
+};
 
 /** How well Genesis actually knows a thing. Never collapsed for presentation. */
 export type Certainty = "known" | "inferred" | "unknown";
@@ -54,6 +90,15 @@ export const MAP_DOMAINS = [
   "customers",
   "financials",
   "goals",
+  // TRAFFIC IS NOT SOCIAL, AND THE SEPARATION IS THE POINT (2026-09-17).
+  //
+  // `social` is what a CONNECTED provider tells us — reach, followers,
+  // engagement — and it is empty until an account is connected. `traffic` is
+  // what OUR OWN storefront observed, and it needs no provider at all: Genesis
+  // serves the page, so the arrival is ours to see. Folding the two together
+  // would make an owner think their Facebook account is why J4 can see
+  // facebook.com referrals, which is exactly backwards.
+  "traffic",
   "social",
   "connections",
   "creation",
@@ -67,6 +112,10 @@ export const DOMAIN_LABEL: Record<MapDomainKey, string> = {
   customers: "Customers",
   financials: "Financials",
   goals: "Goals",
+  // NAMED FOR WHERE IT COMES FROM. "Traffic" alone would sit next to "Social"
+  // reading like another connected feed; this says whose telemetry it is, which
+  // is the distinction Sean asked to be visible in the presentation itself.
+  traffic: "Traffic (your own site)",
   social: "Social",
   connections: "Connections",
   creation: "Creation",
@@ -88,6 +137,17 @@ export const MAP_EDGE_KINDS = {
   fulfilled_by: "Product.fulfillmentProvider — who makes and ships it",
   derived_from: "Product.richContent.designId — the design this came from",
   describes: "a stated or inferred fact about the business itself",
+  // ============ TWO NEW KINDS, EACH NAMING ITS OWN COLUMN =============
+  //
+  // The rule above is that an edge kind must name the column or computation it
+  // rests on. Both of these do, and both rest on our own telemetry rather than
+  // on any provider.
+  landed_on: "StoreVisit.landingPath — the page this traffic actually arrived on",
+  // NOT "this source produced this revenue". The attribution is frozen onto
+  // the order at purchase from the visit that preceded it, and 10 of 17
+  // production orders carry it; the other 7 have none and get no edge rather
+  // than a guessed one.
+  attributed_to: "Order.attributionKind/Source, frozen at purchase from StoreVisit",
 } as const;
 export type MapEdgeKind = keyof typeof MAP_EDGE_KINDS;
 
@@ -440,6 +500,78 @@ export function businessMap(input: BusinessMapInput): BusinessMap {
     }));
   }
 
+  // ---- Traffic: what our own storefront observed ----
+  //
+  // ============ EVERY NODE HERE IS A COUNTED ROW ======================
+  //
+  // No node is drawn from an assumption. A host appears because StoreVisit
+  // recorded that host; a landing path appears because a visit landed there;
+  // an attributed-orders node appears because Order carries attribution frozen
+  // at purchase. There is no modelling, no ratio and no ranking.
+  //
+  // FOUR RULES INHERITED FROM lib/dashboard/visitorSources.ts rather than
+  // re-decided here, because they were settled against production data:
+  //
+  //   direct_unknown is shown, and leads when it dominates — it is 62% of
+  //     production traffic, and a map that showed only the nameable third
+  //     would be the more flattering picture and the false one;
+  //   a host is the host it is — m.facebook.com is its own node, never folded
+  //     into facebook.com;
+  //   orders are counted by attributionKind, never by attributionSource,
+  //     because a direct-attributed order has no source by design;
+  //   StoreVisit is the source of truth, never the StoreTrafficDay rollup,
+  //     which is empty and correctly so.
+  //
+  // CERTAINTY IS "known" THROUGHOUT. These are counts of rows we wrote when
+  // the request arrived — not inferences — and `direct_unknown` is a KNOWN
+  // fact about what the browser sent, not an uncertain one. The uncertainty is
+  // in the world, and the evidence column says so in the node's own detail.
+  {
+    const t = u.traffic;
+    if (t.totalVisits > 0) {
+      add(node("traffic", "traffic:visits", `${t.totalVisits} visit${t.totalVisits === 1 ? "" : "s"}`, "known", {
+        detail:
+          t.firstSeenAt && t.lastSeenAt
+            ? `Recorded by your own storefront between ${t.firstSeenAt.toLocaleDateString()} and ${t.lastSeenAt.toLocaleDateString()}. No connected account involved.`
+            : "Recorded by your own storefront. No connected account involved.",
+        kind: "Storefront visits",
+      }));
+
+      // HOW THEY WERE ATTRIBUTED, including the unattributable ones.
+      for (const row of t.byKind) {
+        add(node("traffic", `traffic:kind:${row.kind}`, `${ATTRIBUTION_KIND_MAP_LABEL[row.kind]} — ${row.visits}`, "known", {
+          detail: ATTRIBUTION_KIND_MAP_DETAIL[row.kind],
+          kind: "How the visit was attributed",
+        }));
+      }
+
+      // THE HOSTS THEMSELVES, exactly as observed.
+      for (const row of t.sources) {
+        add(node("traffic", `traffic:source:${row.source}`, `${row.source} — ${row.visits}`, "known", {
+          detail: "A referring host your storefront actually saw. Recorded as sent, never grouped with a similar one.",
+          kind: "Referring host",
+        }));
+      }
+
+      // WHERE THEY LANDED — captured since 759459b and surfaced for the first
+      // time here and in the marketing read.
+      for (const row of t.landingPaths) {
+        add(node("traffic", `traffic:landing:${row.path}`, `${row.path} — ${row.visits}`, "known", {
+          detail: "Where arrivals actually landed. Path only; a landing URL would carry somebody else's query string.",
+          kind: "Landing page",
+        }));
+      }
+
+      // AND WHAT CAME OF IT, only where an order genuinely carries attribution.
+      if (t.attributedOrders > 0) {
+        add(node("traffic", "traffic:attributed-orders", `${t.attributedOrders} order${t.attributedOrders === 1 ? "" : "s"} traced to a visit`, "known", {
+          detail: `Of ${t.totalOrders} order${t.totalOrders === 1 ? "" : "s"}. The rest carry no attribution and are not guessed at.`,
+          kind: "Attributed orders",
+        }));
+      }
+    }
+  }
+
   // ---- Social ----
   for (const account of p.socialAccounts) {
     add(node("social", `social:${account.id}`, labelOf(account), certaintyOf(account.provenance), {
@@ -576,6 +708,10 @@ const EMPTY_SUMMARY: Record<MapDomainKey, string> = {
   customers: "Nobody has bought anything yet.",
   financials: "No money has moved yet.",
   goals: "You have not told J4 what you are working towards.",
+  // DELIBERATELY NOT "connect an account". Nothing needs connecting for this —
+  // it fills the first time somebody visits the storefront, and saying
+  // otherwise would teach the owner the opposite of how it works.
+  traffic: "Nobody has visited your storefront yet. This fills on its own — no account to connect.",
   social: "No social account is connected, so J4 knows nothing about your reach.",
   connections: "Nothing is connected yet.",
   creation: "Nothing has been designed or uploaded yet.",

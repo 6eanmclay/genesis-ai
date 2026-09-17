@@ -17,6 +17,7 @@ import { getBeliefs } from "@/lib/intelligence/learn";
 import { getRecentDecisionOutcomes, type RecentDecisionOutcome } from "./reasoning";
 import { currentAssetsByRole, type DesignatedAsset } from "./assets";
 import { relationsByKind } from "./relationships";
+import { getVisitorSources, type VisitorSources } from "@/lib/dashboard/visitorSources";
 
 // J4 Foundation — the canonical representation of what J4 knows about a
 // business at any point in time (J4_FOUNDATION.md, Gap A). Combines the
@@ -197,6 +198,37 @@ export interface BusinessUnderstanding {
    * rather than in either of them.
    */
   connectedSummaries: ConnectedSummaries;
+  /**
+   * WHERE THE VISITORS CAME FROM, AND WHERE THEY LANDED (2026-09-17).
+   *
+   * ============ NOT A CONNECTION, AND THAT IS THE POINT =================
+   *
+   * Sean: "A connected social account is required for provider-dependent
+   * capabilities such as publishing or provider API data. It is NOT required
+   * for Genesis to observe traffic arriving at the merchant's website."
+   *
+   * Genesis serves the storefront, so an arrival is our own telemetry. Reading
+   * Facebook's insights needs Facebook; recording that somebody arrived FROM
+   * facebook.com needs nothing but the request that arrived. This field has no
+   * provider dependency and must never acquire one.
+   *
+   * ============ WHY IT IS IN THE UNDERSTANDING AT ALL ===================
+   *
+   * `StoreVisit` has recorded every arrival since 759459b (2026-09-01) — 933 of
+   * them in production — and J4 could not see a single one, so an owner asking
+   * "where are my visitors coming from" got nothing while the answer sat in a
+   * table. There is one answer to "what does J4 know", and this is part of it.
+   *
+   * THE SAME READ THE MARKETING SCREEN USES. getVisitorSources carries four
+   * truthfulness rules settled against production data rather than reasoned
+   * out: orders counted by attributionKind and never by attributionSource;
+   * StoreVisit as the source of truth and never the empty StoreTrafficDay
+   * rollup; a host shown as the host it is, so m.facebook.com is not folded
+   * into facebook.com; and direct_unknown leading when it dominates rather than
+   * being tucked out of sight. A second read shaped for J4 would be free to
+   * disagree with the owner's own screen about their own traffic.
+   */
+  traffic: VisitorSources;
   /** Appointments still ahead, from a connected calendar. */
   upcomingAppointments: Awaited<ReturnType<typeof getUpcomingAppointments>>;
   /** What has happened lately: orders, customers, and the activity feed. */
@@ -375,6 +407,8 @@ export async function getBusinessUnderstanding(
     // Appended LAST to match its query. See the note beside it.
     activePromotionRows,
     recentOrderRows,
+    // Appended last, with its query appended last. See the note beside it.
+    visitorSources,
   ] = await Promise.all([
     getBusinessProfile(storeId),
     getBeliefs(storeId, { viewerUserId: opts?.viewerUserId }),
@@ -470,6 +504,23 @@ export async function getBusinessUnderstanding(
         carrier: true,
       },
     }),
+    // ============ WHERE THE VISITORS CAME FROM (2026-09-17) ============
+    //
+    // Appended last, with its binding appended last, for the reason this file
+    // already records twice.
+    //
+    // NOT A CONNECTION, and that is the whole point of it being here. Sean:
+    // "A connected social account is required for provider-dependent
+    // capabilities such as publishing or provider API data. It is NOT required
+    // for Genesis to observe traffic arriving at the merchant's website."
+    // Genesis serves the storefront, so the arrival is our own telemetry.
+    // Nothing in this read touches a provider.
+    //
+    // THE SAME FUNCTION THE MARKETING SCREEN READS. Not a second query shaped
+    // for J4 — getVisitorSources carries four truthfulness rules that were
+    // settled against production data, and a parallel read would be free to
+    // disagree with the owner's own screen about their own traffic.
+    getVisitorSources(storeId),
   ]);
 
   // Resolved against the goals and challenges ALREADY fetched, so naming what
@@ -521,6 +572,8 @@ export async function getBusinessUnderstanding(
       campaign: campaignSummary,
       appointment: appointmentSummary,
     },
+    // Our own telemetry, not a provider's. See the field's own note.
+    traffic: visitorSources,
     upcomingAppointments,
     recentBusiness: {
       orders: orderSummary,
