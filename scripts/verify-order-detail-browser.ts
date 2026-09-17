@@ -124,6 +124,17 @@ async function main() {
     // ------------------------------------------------------------------
     console.log("\n1. The sale is listed, and it is a link");
     await page.goto(`${server.baseUrl}/b/${store.slug}/orders`, { waitUntil: "domcontentloaded" });
+    // THE OPENING FIRST, EVERY TIME — and this suite was only doing it once,
+    // in one section near the end. J4Boot is a full-screen fixed overlay at
+    // z-[120] that plays for roughly seven seconds on a fresh launch, and the
+    // hit-test below reported the tap landing on it rather than on the row.
+    //
+    // NOT AN ARBITRARY WAIT. waitForAppReady is the repository's own primitive
+    // and it waits for application STATE: the shell attached, hydrated, and
+    // the opening either absent or finished. It is the same fix that was
+    // already applied one section further down — it simply had never been
+    // applied to the navigations that come before it.
+    await waitForAppReady(page);
     await page.waitForLoadState("networkidle").catch(() => {});
     // ============ VISIBLE, NOT MERELY PRESENT (2026-08-31) =========
     //
@@ -185,18 +196,42 @@ async function main() {
         assert("  so the browser gives it a pointer cursor",
           await row.evaluate((el) => getComputedStyle(el).cursor === "pointer"));
 
-        // PRESSING EMPTY SPACE IN THE ROW OPENS THE ORDER. Bottom-right inset,
-        // which is padding rather than text — the exact place that did nothing
-        // before.
-        await page.mouse.click(rowBox.x + rowBox.width - 12, rowBox.y + rowBox.height - 10);
-        await page.waitForURL(new RegExp(`/orders/${order.id}$`), { timeout: 20_000 }).catch(() => {});
-        assert("pressing blank space inside the row opens the order",
-          page.url().endsWith(`/orders/${order.id}`), page.url());
+        // WHAT WOULD A TAP ACTUALLY HIT?
+        //
+        // Asked as a hit-test rather than as a click, and that is a correction
+        // worth recording. Two click-based versions failed for reasons that had
+        // nothing to do with the hit area: a bottom-right coordinate stopped
+        // being padding the moment a duplicate PAID pill was removed and the row
+        // grew shorter, and an element-click on the email timed out because
+        // Playwright refuses to click an element that something covers — here,
+        // the very overlay under test.
+        //
+        // document.elementFromPoint is what the browser itself consults when a
+        // finger lands. It is deterministic, it does not depend on navigation
+        // timing, and it asks precisely the question: press this inert text, and
+        // does the order link receive it?
+        const hits = await page.evaluate((orderId: string) => {
+          const row = document.querySelector('li[data-interactive="true"]');
+          if (!row) return { ok: false, why: "no row" };
+          const inert = [...row.querySelectorAll("p")].find((p) => (p.textContent ?? "").includes("@"));
+          if (!inert) return { ok: false, why: "no buyer email on the row" };
+          const r = inert.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          const link = hit?.closest(`a[href$="/orders/${orderId}"]`);
+          return {
+            ok: !!link,
+            why: hit ? `${hit.tagName}.${(hit as HTMLElement).className}`.slice(0, 80) : "nothing",
+          };
+        }, order.id);
+
+        assert("pressing the buyer's email — inert text — reaches the order link",
+          hits.ok, `the tap landed on ${hits.why}`);
       }
 
       // BACK TO THE LIST for the section that follows, which clicks the link
       // itself and must start from the same place it always did.
       await page.goto(`${server.baseUrl}/b/${store.slug}/orders`, { waitUntil: "domcontentloaded" });
+      await waitForAppReady(page);
       await link.waitFor({ state: "visible", timeout: 30_000 });
 
       // THE INNER CONTROLS ARE STILL THEIR OWN TARGETS. Tracking goes to the
@@ -280,6 +315,7 @@ async function main() {
         },
       });
       await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAppReady(page);
 
       const summary = page.getByText("Correct this tracking number", { exact: false }).first();
       await summary.waitFor({ state: "visible", timeout: 60_000 });
@@ -307,6 +343,7 @@ async function main() {
         data: { shipmentNotifiedAt: new Date() },
       });
       await page.reload({ waitUntil: "domcontentloaded" });
+      await waitForAppReady(page);
       await page.getByText("Total paid").waitFor({ state: "visible", timeout: 60_000 });
       const afterNotified = (await page.locator("body").innerText()).replace(/\s+/g, " ");
       assert("once the customer has been told, the correction is not offered",
@@ -326,6 +363,7 @@ async function main() {
       // as a person does it — typing into the search box and clicking through
       // — rather than by calling the functions underneath.
       await page.goto(`${server.baseUrl}/b/${store.slug}/orders`, { waitUntil: "domcontentloaded" });
+      await waitForAppReady(page);
       const search = page.getByLabel("Search orders");
       await search.waitFor({ state: "visible", timeout: 60_000 });
 
@@ -427,6 +465,10 @@ async function main() {
     await page.goto(`${server.baseUrl}/b/${secondStore.slug}/orders/${order.id}`, {
       waitUntil: "domcontentloaded",
     });
+    // NO READINESS WAIT HERE, DELIBERATELY. This navigation is expected to be
+    // REFUSED, and a refusal does not render the app shell at all — so waiting
+    // for it timed out on a page that was behaving exactly as intended.
+
     await page.waitForLoadState("networkidle").catch(() => {});
     const refusedText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
     assert("the customer's name does not leak", !/Gabriel Mendies/.test(refusedText),
