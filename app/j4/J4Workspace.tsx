@@ -1895,6 +1895,65 @@ export function J4Workspace({
     el.scrollTop = shownCategory === "conversation" ? el.scrollHeight : 0;
   }, [localMessages.length, lastMessageContentLength, shownCategory]);
 
+  // ============ THE RAIL THAT SCROLLED WITHOUT SAYING SO ================
+  //
+  // From Sean's production screenshot at 390px: Briefing, Conversation, Tasks,
+  // Ideas, Decisions, and then "Inform…" cut clean off at the edge of the
+  // screen with nothing after it. The rail has been overflow-x-auto the whole
+  // time, so it always scrolled — a word sliced in half against a hard edge
+  // simply does not read as "there is more this way", it reads as broken, and
+  // two of the seven views were effectively unreachable to anyone who did not
+  // try swiping a strip of text on the off chance.
+  //
+  // Seven views is the architecture and is not mine to trim. What was missing
+  // was the affordance, so that is what this adds.
+  //
+  // MEASURED, NOT ASSUMED. The fade appears on a side only when there is
+  // genuinely something off-screen on that side, and it goes when there is
+  // not — so it is a statement about the rail rather than decoration that is
+  // always on. A permanent fade would be the same lie in the other direction:
+  // it would say "more this way" at the end of the list.
+  const railRef = useRef<HTMLDivElement>(null);
+  const [railMore, setRailMore] = useState({ left: false, right: false });
+  useEffect(() => {
+    const el = railRef.current;
+    if (!el) return;
+    const read = () => setRailMore({
+      left: el.scrollLeft > 2,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2,
+    });
+    read();
+    el.addEventListener("scroll", read, { passive: true });
+    // The rail's own width changes with the viewport and its content changes
+    // with the counts, and both change what is off-screen.
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", read);
+      ro.disconnect();
+    };
+  }, []);
+
+  // AND THE SELECTED VIEW IS ALWAYS THE ONE YOU CAN SEE. Opening Understanding
+  // — the last tab — used to leave the rail showing Briefing, so the owner had
+  // no on-screen confirmation of where they were. Driven by the selection
+  // itself, so there is nothing to time.
+  //
+  // ONLY THE RAIL MOVES, and that correction was earned. The first version
+  // called scrollIntoView on the selected tab, which scrolls every scrollable
+  // ANCESTOR as well — and J4Overlay keeps the Office mounted while it is
+  // closed, so a rail nobody could see was able to scroll the dashboard
+  // underneath it. The Office suite caught it: with the page dragged out of
+  // position, the door to the Office was no longer where a thumb would find
+  // it. Setting scrollLeft touches the rail and nothing else.
+  useEffect(() => {
+    const el = railRef.current;
+    const tab = el?.querySelector<HTMLElement>('[data-tab-active="true"]');
+    if (!el || !tab) return;
+    const centred = tab.offsetLeft - (el.clientWidth - tab.offsetWidth) / 2;
+    el.scrollLeft = Math.max(0, Math.min(centred, el.scrollWidth - el.clientWidth));
+  }, [activeCategory]);
+
   const categoryTabs: { key: Category; label: string; count: number }[] = [
     // Present so the owner can come BACK to the briefing after opening a
     // queue. Not a new place to go - it is where they already are.
@@ -2146,13 +2205,38 @@ export function J4Workspace({
 
       {!talkingOnly && (
         <div
-          className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2"
-          style={{ borderColor: GENESIS_ATMOSPHERE.border }}
+          ref={railRef}
+          // TABLIST BECAUSE THE BUTTONS BELOW ARE TABS. role="tab" and
+          // aria-selected are only meaningful inside one; declaring the
+          // children and not the parent would be worse than declaring neither.
+          role="tablist"
+          aria-label="Office views"
+          data-testid="office-rail"
+          data-rail-more={`${railMore.left ? "left" : ""}${railMore.left && railMore.right ? " " : ""}${railMore.right ? "right" : ""}`.trim() || "none"}
+          className="flex shrink-0 gap-1 overflow-x-auto border-b px-5 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          style={{
+            borderColor: GENESIS_ATMOSPHERE.border,
+            // A MASK, NOT AN OVERLAY. An absolutely-positioned gradient on top
+            // of the rail would sit between a thumb and the tab underneath it,
+            // so the affordance for reaching a tab would be the thing stopping
+            // you reaching it. A mask fades the pixels and catches nothing.
+            ...(railMore.left || railMore.right
+              ? (() => {
+                  const g = `linear-gradient(to right, transparent 0, #000 ${railMore.left ? "28px" : "0px"}, #000 calc(100% - ${railMore.right ? "28px" : "0px"}), transparent 100%)`;
+                  // Both spellings: iOS Safari is where this was seen.
+                  return { maskImage: g, WebkitMaskImage: g };
+                })()
+              : {}),
+          }}
         >
           {categoryTabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
+              role="tab"
+              aria-selected={activeCategory === tab.key}
+              data-tab={tab.key}
+              data-tab-active={activeCategory === tab.key ? "true" : "false"}
               onClick={() => setActiveCategory(tab.key)}
               className={
                 activeCategory === tab.key

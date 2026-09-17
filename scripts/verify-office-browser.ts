@@ -606,6 +606,102 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
+    console.log("\n1b. On a phone, the owner can tell there are seven");
+    // -----------------------------------------------------------------------
+    // ============ WHAT SEAN'S SCREENSHOT SHOWED (2026-09-17) ============
+    //
+    // The check above passes when seven tabs EXIST. On a 390px phone, five and
+    // a half of them were on screen and the sixth read "Inform…", sliced off
+    // against the edge of the display with nothing after it. The rail has been
+    // overflow-x-auto the whole time, so it always scrolled — but a word cut in
+    // half against a hard edge does not say "there is more this way", and two
+    // of the seven views belonged to whoever thought to swipe a strip of text.
+    //
+    // Existence was never the question. Reach was.
+    {
+      const rail = page.locator('[data-testid="office-rail"]');
+      const overflowing = await rail.evaluate((el) => el.scrollWidth > el.clientWidth + 2);
+      assert("the rail really does have more than fits — otherwise this proves nothing",
+        overflowing, "at 390px the seven views must not fit, or the check below is vacuous");
+
+      assert("  and the rail says so, rather than just clipping",
+        (await rail.getAttribute("data-rail-more"))?.includes("right") === true,
+        `data-rail-more=${await rail.getAttribute("data-rail-more")}`);
+
+      // THE FADE IS A CLAIM ABOUT THE RAIL, so it must be able to be false.
+      // A gradient that is always on would pass the assertion above while
+      // saying "more this way" at the end of the list.
+      await rail.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+      await rail.evaluate((el) => new Promise((r) => requestAnimationFrame(() => r(el))));
+      assert("  and stops saying so at the end of the list",
+        (await rail.getAttribute("data-rail-more"))?.includes("right") === false,
+        `data-rail-more=${await rail.getAttribute("data-rail-more")}`);
+      assert("  while saying there is now something behind",
+        (await rail.getAttribute("data-rail-more"))?.includes("left") === true,
+        `data-rail-more=${await rail.getAttribute("data-rail-more")}`);
+
+      // AND THE LAST VIEW IS GENUINELY REACHABLE, which is the whole point.
+      // Pressed by coordinate rather than as an element: the mask fades the
+      // rail's own pixels and catches nothing, so this is what a thumb does.
+      const last = rail.locator('[data-tab="understanding"]');
+      const box = await last.boundingBox();
+      assert("  the last view can be reached", !!box);
+      if (box) {
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        assert("  and pressing it selects it",
+          (await last.getAttribute("data-tab-active")) === "true",
+          `data-tab-active=${await last.getAttribute("data-tab-active")}`);
+      }
+
+      // AND THE SELECTED VIEW IS ON SCREEN. Selecting the last tab from a rail
+      // scrolled back to the start used to leave the owner looking at Briefing
+      // with no confirmation of where they were.
+      await rail.evaluate((el) => { el.scrollLeft = 0; });
+      await page.locator('[data-tab="briefing"]').click();
+      // Scrolled WITHIN the rail, not with scrollIntoViewIfNeeded, which moves
+      // ancestors too — the same trap the component itself fell into.
+      await rail.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+      await page.locator('[data-tab="understanding"]').click();
+      // WAITED FOR, BECAUSE THE SCROLL HAPPENS IN AN EFFECT. Playwright's
+      // click returns once the event is dispatched; React commits the new
+      // selection and only then runs the effect that moves the rail. Reading
+      // the geometry straight after the click measured the frame before the
+      // component had acted, and passed or failed on timing.
+      //
+      // This is a wait for a STATE, not a sleep: if the rail never brings the
+      // selection into view it times out and the assertion fails, which is
+      // exactly what it should do.
+      const visible = await page
+        .waitForFunction(() => {
+          const el = document.querySelector('[data-testid="office-rail"]');
+          const t = el?.querySelector('[data-tab-active="true"]');
+          if (!el || !t) return false;
+          const a = t.getBoundingClientRect(), b = el.getBoundingClientRect();
+          return a.left >= b.left - 1 && a.right <= b.right + 1;
+        }, undefined, { timeout: 10_000 })
+        .then(() => true)
+        .catch(() => false);
+      assert("  and the selected view is inside the rail, not off the end of it", visible);
+
+      // ============ AND PUT THE OFFICE BACK ==========================
+      //
+      // This section leaves Understanding selected, and every section below it
+      // inherits that. It cost a bisect to find: the suite went green with this
+      // section removed and red with it present, failing eleven sections later
+      // on a click that had nothing to do with the rail — because Understanding
+      // is the one view that loads on demand and changes the panel's height
+      // while it settles.
+      //
+      // A check that changes what the checks after it are looking at is not a
+      // check, it is a mutation. Section 1 established that the Office opens on
+      // Conversation; this hands it back in that state.
+      await page.locator('[data-tab="conversation"]').click();
+      await page.waitForFunction(
+        () => document.querySelector('[data-tab="conversation"]')?.getAttribute("data-tab-active") === "true",
+        undefined, { timeout: 10_000 });
+    }
+
+    // -----------------------------------------------------------------------
     console.log("\n2. Each view shows its own content, and no other's");
     // -----------------------------------------------------------------------
     // THE 6b68cff CHECK. A rail that highlights and changes nothing fails the
