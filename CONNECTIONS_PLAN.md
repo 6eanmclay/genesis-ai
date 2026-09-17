@@ -180,6 +180,78 @@ is not unfinished work and its credentials are not wanted.
 
 ---
 
+## 8a. Traffic intelligence is NOT a Connection (Sean, 2026-09-17)
+
+**The distinction this plan has to hold:**
+
+| capability | needs a provider connection? |
+|---|---|
+| publishing a post; reading a provider's own API data (followers, reach, invoices) | **yes** — that is the provider's data and only the provider has it |
+| **observing traffic arriving at the merchant's own website** | **no** — that is the merchant's own site telemetry, and Genesis serves the site |
+
+Genesis can know where visitors came from because the storefront is ours. A
+connected Facebook account is required to read Facebook's insights; it is *not*
+required to record that a visitor arrived from `facebook.com`. Nothing in this
+section may acquire a provider dependency.
+
+### What is already captured — traced 2026-09-17, nothing to add
+
+`StoreVisit` has recorded every storefront arrival since `759459b`
+(2026-09-01). Against Sean's list:
+
+| asked for | captured | read today |
+|---|---|---|
+| source / referrer | `StoreVisit.source` — host, never a full URL | yes |
+| tracked link / campaign | `StoreVisit.campaign`, `Order.attributionCampaign` | **no** |
+| landing page | `StoreVisit.landingPath` | **no — captured on all 933 visits and read by nothing** |
+| timestamp | `firstSeenAt` / `lastSeenAt` | window only |
+| visits / clicks | one row per visit, idempotent per `visitToken` | yes |
+| conversion / order relationship | `Order.attributionKind/Source/Campaign/Evidence/VisitId` — frozen at purchase | counted, never followed |
+| direct / unknown | `attributionKind` + `evidence` (why it was attributed) | yes |
+
+**Production, read-only 2026-09-17: 933 visits across 8 stores** —
+`direct_unknown` 582, `observed_referral` 308, `explicit_tracking` 43; 216
+visits recorded products viewed; **17 orders, 10 of them attributed and all 10
+carrying `attributionVisitId`**, so the visit→order join is real and populated;
+`campaign` is set on 1 visit.
+
+**Nothing needs to be collected. The pipeline is richer than the request.**
+
+### The actual gap: J4 does not know any of it
+
+`BusinessUnderstanding` contains no traffic at all, so J4 cannot answer a
+question about it. Worse, `lib/businessModel/businessMap.ts` still states there
+is *"no traffic attribution anywhere in the schema"* — true when written, false
+since `759459b`, and it is the sentence that justifies not drawing the
+`Traffic` node.
+
+An owner surface does exist (`/dashboard/marketing`, via
+`lib/dashboard/visitorSources.ts`), and it carries four hard-won truthfulness
+rules that any new work must inherit rather than re-decide: orders are counted
+by `attributionKind` and never by `attributionSource`; `StoreVisit` is the
+source of truth and never the empty `StoreTrafficDay` rollup; a host is shown as
+the host it is (`m.facebook.com` stays separate from `facebook.com`); and the
+dominant kind leads because it is dominant, so `direct_unknown` is never tucked
+out of sight.
+
+### Proposed — smallest real-data implementation, NOT YET BUILT
+
+1. **Give J4 the traffic it can already see.** One read into
+   `BusinessUnderstanding`, sourced from the existing `getVisitorSources`. No
+   new table, no new collection, no provider. This is the whole of Sean's ask.
+2. **Surface `landingPath`.** Captured on every visit and never read; it is the
+   only field that answers "what happened afterward" from data we hold.
+3. **Correct the stale `businessMap.ts` sentence**, and *separately* decide
+   whether the `Traffic` node is now drawable — the data supports it, but
+   drawing it is a product decision about the map, not a consequence of this.
+
+**Deliberately excluded, inheriting the existing doctrine:** no conversion rate
+(visits and attributed orders are differently scoped populations, so a ratio is
+arithmetic rather than a fact), no "top channel" ranking, no campaign section
+that implies campaigns exist when one visit carries one, and no host collapsing.
+
+---
+
 ## 9a. Zendrop and Spocket — wanted, and traced before assuming
 
 Sean, 2026-09-17: these are the two sourcing/fulfilment connections actually
