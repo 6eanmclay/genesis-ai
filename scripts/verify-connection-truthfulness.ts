@@ -226,20 +226,48 @@ async function main() {
   }
 
   // A connector declares its own credential requirement — no list elsewhere.
-  const declaring = CONNECTOR_CATALOG
-    .filter((e) => e.connector?.configured !== undefined)
-    .map((e) => e.id)
-    .sort();
-  // GREW BY TWO ON 2026-08-27, correctly. Square and Xero are OAuth connectors
-  // whose client id and secret live in the environment, so they genuinely do
-  // have something to check and genuinely do belong here. Twilio, added the
-  // same day, does NOT -- its credentials are the merchant's own, so it omits
-  // configured() entirely, which is how a connector says "nothing to
-  // configure". An earlier version of the Twilio connector answered
-  // `configured() { return true }` and this assertion caught it.
-  eq("the OAuth connectors that need platform credentials declare it",
-    declaring,
-    ["facebook", "google-calendar", "instagram", "printful", "quickbooks", "square-pos", "tiktok", "xero"]);
+  //
+  // ============ THE LIST WAS THE BUG (2026-09-16) =====================
+  //
+  // This asserted `declaring` against a hardcoded array of eight ids, and it
+  // PASSED while being wrong: Mailchimp is an OAuth connector whose client id
+  // and secret live in the environment, it declared no configured(), and it was
+  // simply absent from both sides of the comparison. A hand-written expected
+  // list cannot notice the entry nobody wrote down — the mirrored-registry
+  // failure ARCHITECTURE.md names, committed by the assertion meant to prevent
+  // it, and the same lesson the currency sweep and the test-isolation guard
+  // each learned the hard way.
+  //
+  // So the RULE is asserted instead of the membership, and it comes from the
+  // connector's own declared authKind:
+  //
+  //   oauth    the client id and secret are the PLATFORM's, they live in the
+  //            environment, and there is therefore something to check
+  //   api_key  the credentials are the MERCHANT's own, so there is nothing to
+  //            configure and configured() must be absent entirely
+  //
+  // Twilio is the api_key case and an earlier version of it answered
+  // `configured() { return true }`, which the old assertion did catch. The rule
+  // below still catches it, and now catches the Mailchimp direction too.
+  for (const e of CONNECTOR_CATALOG) {
+    if (!e.connector) continue;
+    const declares = e.connector.configured !== undefined;
+    if (e.connector.capabilities.authKind === "oauth") {
+      assert(`${e.id} is OAuth, so it declares whether its platform credentials exist`,
+        declares, "an OAuth connector without configured() is offered as available and can only throw");
+    } else {
+      assert(`${e.id} authenticates with the merchant's own key, so it declares nothing`,
+        !declares, "an api_key connector has no platform credential to check");
+    }
+    // AND THE TWO SURFACES AGREE ABOUT WHICH IT IS. The catalog drives the
+    // screen — ConnectorCard picks "Redirecting..." or "Connecting..." from
+    // entry.authMethod — while the connector is what actually authenticates.
+    // verify-square and verify-twilio each assert this for themselves; neither
+    // could see Mailchimp, where the two had disagreed since the OAuth
+    // conversion.
+    eq(`${e.id}: the catalog and the connector agree on how it authenticates`,
+      e.authMethod, e.connector.capabilities.authKind);
+  }
 
   // ============ PRINTFUL'S DECLARATION IS ALSO TRUE ===================
   //

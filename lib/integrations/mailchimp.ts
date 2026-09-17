@@ -128,6 +128,30 @@ export const mailchimpConnector: IntegrationConnector = {
     revokesOnDisconnect: false,
   },
 
+  /**
+   * ============ THE ONE OAUTH CONNECTOR THAT NEVER DECLARED THIS ========
+   *
+   * Mailchimp converted from a pasted API key to OAuth and this was not added
+   * with the rest of the conversion. app/dashboard/connections/page.tsx reads
+   * `entry.connector.configured?.() ?? true`, so a connector that says nothing
+   * is treated as available — and Mailchimp said nothing.
+   *
+   * The result is precisely what types.ts says this member exists to prevent:
+   * "the screen offered a Connect button that could only ever throw — the
+   * provider looked available and was not." Pressing Connect reached
+   * mailchimpClientCredentials(), which throws on the missing variables.
+   *
+   * BOTH HALVES, like Printful's. The authorize URL needs the id and the token
+   * exchange needs the secret, so half a credential fails a step later — after
+   * the owner has already left for Mailchimp and come back.
+   *
+   * A LEGACY API KEY IS NOT AN ANSWER HERE. Connections pasted before the
+   * conversion still work and are still read (see MailchimpApiKeyCredentials),
+   * but this question is about starting a NEW connection, and that path is
+   * OAuth only.
+   */
+  configured: () => Boolean(process.env.MAILCHIMP_CLIENT_ID && process.env.MAILCHIMP_CLIENT_SECRET),
+
   async connect(storeId, userId, params) {
     const { clientId, clientSecret } = mailchimpClientCredentials();
     const baseUrl = await getBaseUrl();

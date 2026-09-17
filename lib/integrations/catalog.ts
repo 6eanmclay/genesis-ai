@@ -122,7 +122,16 @@ export const CONNECTOR_CATALOG: CatalogEntry[] = [
     name: "Mailchimp",
     category: "marketing",
     description: "Let Genesis summarize your campaign performance and surface what's working.",
-    authMethod: "api_key",
+    // OAUTH, AND IT HAS BEEN SINCE THE CONVERSION (corrected 2026-09-16).
+    // This still said api_key, describing the pasted-key flow that preceded it.
+    // mailchimpConnector.capabilities.authKind says oauth, and the connector is
+    // the half that actually authenticates — so this was the stale one.
+    //
+    // It is not cosmetic: ConnectorCard renders
+    // `entry.authMethod === "oauth" ? "Redirecting..." : "Connecting..."`, so
+    // the owner was told Genesis was connecting while it was about to send them
+    // to Mailchimp's consent screen.
+    authMethod: "oauth",
     sensitivity: "standard",
     recommendedFor: [
       "general_retail",
