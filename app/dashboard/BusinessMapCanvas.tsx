@@ -51,11 +51,6 @@ import {
 // one world: you flew into a branch, you did not switch screens. The browser
 // suite still reads the world's real scale factor for that reason.
 
-const DOMAIN_ORDER: MapDomainKey[] = [
-  "business", "commerce", "customers", "financials", "goals",
-  "social", "connections", "creation", "learned",
-];
-
 interface Geometry {
   w: number; h: number; cx: number; cy: number;
   /** Radius of the ring of domains around the orb. */
@@ -160,12 +155,26 @@ export function BusinessMapCanvas({
     [domain, prospects],
   );
 
-  /** The nine branches, placed. Computed once — there is only one ring now. */
+  /**
+   * THE PICTURE IS THE DATA (2026-09-17).
+   *
+   * This used to place a hand-written DOMAIN_ORDER list. Traffic was added to
+   * MAP_DOMAINS and never to that list, so the sentence above the map counted
+   * ten branches while the map drew nine — and the one it silently dropped was
+   * the branch that had just been built. Nothing was broken enough to fail:
+   * the count was right, the map was pretty, and Traffic simply was not there.
+   *
+   * The same shape has now cost this repository four separate defects: a list
+   * kept by hand next to the thing it describes IS the drift it was meant to
+   * prevent. So the ring is placed straight off the domains the server sent.
+   * A branch that exists in the model is drawn, and one that does not, is not.
+   * There is no second list to forget.
+   */
   const ring = useMemo<Placed[]>(() => {
-    const keys = DOMAIN_ORDER;
-    return keys.map((key, i) => {
-      const d = map.domains.find((x) => x.key === key)!;
-      const angle = (i / keys.length) * Math.PI * 2 - Math.PI / 2;
+    const domains = map.domains;
+    return domains.map((d, i) => {
+      const key = d.key;
+      const angle = (i / domains.length) * Math.PI * 2 - Math.PI / 2;
       // WHAT IS REALLY IN THERE, INCLUDING WHAT COULD BE. Social has no nodes
       // and four platforms behind it; counting only nodes made the branch read
       // "not known yet" and then open onto four cards. The count and the
@@ -383,6 +392,10 @@ export function BusinessMapCanvas({
                     role={open ? undefined : "button"}
                     tabIndex={open ? undefined : 0}
                     data-level="child"
+                    /* THE BRANCH NAMES ITSELF, so a check can ask which
+                       branches were drawn instead of reading the labels back
+                       out of the picture. */
+                    data-branch={c.key}
                     aria-label={open ? undefined : `${c.label}, ${c.sub}`}
                     onClick={open ? undefined : () => step(c.key)}
                     onKeyDown={(e) => {
@@ -390,7 +403,30 @@ export function BusinessMapCanvas({
                       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); step(c.key); }
                     }}
                   >
-                    {!open && <circle cx={c.x} cy={c.y} r={G.hit} fill="transparent" />}
+                    {/* ============ THE WHOLE BRANCH IS THE TARGET ==========
+                        This was a transparent circle around the DOT, and the
+                        label beside it was only tappable where a glyph happened
+                        to be — the space between the dot and its own text hit
+                        nothing at all. On a phone that gap is most of what a
+                        thumb aims at, and it is the same defect the order rows
+                        had: the thing that looks pressable is a block, and only
+                        a few pixels inside it were.
+                        The dot, the label and the count are now one target. */}
+                    {!open && (() => {
+                      const chars = Math.max(c.label.length, c.sub.length);
+                      const est = chars * G.label * 0.56;
+                      const x0 = centred ? c.x - Math.max(G.hit, est / 2)
+                        : right ? c.x - G.hit : c.x + dx - est;
+                      const x1 = centred ? c.x + Math.max(G.hit, est / 2)
+                        : right ? c.x + dx + est : c.x + G.hit;
+                      const y0 = Math.min(c.y - G.hit, c.y + dy - G.label * 1.25);
+                      const y1 = Math.max(c.y + G.hit, c.y + dy + G.sub * 1.7);
+                      return (
+                        <rect data-branch-hit={c.key}
+                          x={x0} y={y0} width={x1 - x0} height={y1 - y0}
+                          fill="transparent" />
+                      );
+                    })()}
                     <circle cx={c.x} cy={c.y} r={G.dot}
                       fill={c.certainty === "unknown" ? "var(--map-surface)" : certaintyColor(c.certainty)}
                       stroke={certaintyColor(c.certainty)} strokeWidth={1.6} />

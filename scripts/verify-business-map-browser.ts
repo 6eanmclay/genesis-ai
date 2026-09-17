@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { mkdirSync } from "fs";
 import { startTestServer } from "@/scripts/lib/testServer";
 import { waitForAppReady } from "@/scripts/lib/appReadiness";
+import { MAP_DOMAINS } from "@/lib/businessModel/businessMap";
 
 // THE BUSINESS MAP, IN A REAL BROWSER:
 //
@@ -255,6 +256,71 @@ async function main() {
     await page.goto(home, { waitUntil: "domcontentloaded" });
     await settle(page);
     await page.waitForSelector('[data-screen="business-map"]', { timeout: 30_000 });
+
+    // ====================================================================
+    console.log("\n=== 1b. Every branch the model has is a branch on the map ===\n");
+    // ====================================================================
+    //
+    // ============ WHAT THIS WAS WRITTEN FOR (2026-09-17) ==============
+    //
+    // Traffic was added to MAP_DOMAINS and the map kept drawing nine branches,
+    // because the canvas placed a second, hand-written list of its own. The
+    // sentence above the map counted the model — "8 of 10 branches" — while
+    // the picture underneath it showed nine, and the missing one was the
+    // branch that had just been built. Nothing failed. It was found in one of
+    // Sean's screenshots, by counting the dots.
+    //
+    // So this asserts the two lists are the same list, against MAP_DOMAINS
+    // itself rather than against a copy written here — a copy here would be
+    // the identical defect, one layer further out.
+    {
+      const drawn = await page.$$eval("[data-branch]", (els) =>
+        els.map((el) => el.getAttribute("data-branch") ?? ""));
+      const expected = [...MAP_DOMAINS].sort();
+      const actual = [...new Set(drawn)].sort();
+
+      assert("every domain in the model is drawn on the map",
+        actual.length === expected.length && actual.every((k, i) => k === expected[i]),
+        `model has [${expected.join(", ")}], map drew [${actual.join(", ")}]`);
+      assert("  and each one is drawn exactly once",
+        drawn.length === new Set(drawn).size,
+        `${drawn.length} drawn, ${new Set(drawn).size} distinct`);
+      // THE BRANCH THE DRIFT HID, named, because it is the one this is for.
+      assert("  including Traffic, which is the branch that went missing",
+        drawn.includes("traffic"), drawn.join(", "));
+
+      // ============ AND THE COST OF MAKING TARGETS BIGGER ============
+      //
+      // Each branch's tap area now covers its dot AND its label, because the
+      // gap between the two used to hit nothing. That is the right fix and it
+      // carries its own risk in the opposite direction: a target big enough to
+      // reach the label is big enough to reach the NEXT branch's label, and
+      // then a tap on Commerce opens Customers. The owner would never be told
+      // — they would just be somewhere they did not ask to be.
+      //
+      // Measured in real layout coordinates, so it holds for however many
+      // branches the model grows to.
+      const hits = await page.$$eval("[data-branch-hit]", (els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { key: el.getAttribute("data-branch-hit") ?? "", x: r.x, y: r.y, w: r.width, h: r.height };
+        }));
+      assert("  every branch has a tap area", hits.length === drawn.length,
+        `${hits.length} areas for ${drawn.length} branches`);
+
+      const overlaps: string[] = [];
+      for (let i = 0; i < hits.length; i++) {
+        for (let j = i + 1; j < hits.length; j++) {
+          const a = hits[i], b = hits[j];
+          if (a.w === 0 || b.w === 0) continue;
+          const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+          const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+          if (ox > 0 && oy > 0) overlaps.push(`${a.key}/${b.key}`);
+        }
+      }
+      assert("  and no branch can steal another branch's tap",
+        overlaps.length === 0, overlaps.join(", "));
+    }
 
     // ====================================================================
     console.log("\n=== 2. The orb is J4, and it holds the centre ===\n");
