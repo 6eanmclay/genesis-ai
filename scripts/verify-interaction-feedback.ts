@@ -187,6 +187,99 @@ async function main(): Promise<void> {
       assert("the control opts out of the legacy double-tap wait",
         /manipulation/.test(touch), touch);
     }
+
+    // ==================================================================
+    console.log("\n5. A card that is a radio is a control, and a caption is not\n");
+    // ==================================================================
+    //
+    // ============ THE GAP THE AUDIT FOUND (2026-09-17) ================
+    //
+    // Sean asked for the sweep as well as the rule: "looks interactive →
+    // actually interactive → produces visible feedback", and the inverse.
+    // Running it turned up one class the first version of the contract missed.
+    //
+    // A label that wraps its own radio or checkbox is a control: the card is
+    // the tap target and the input inside it is usually sr-only. Four exist,
+    // including how a customer chooses to PAY — and every one already carried
+    // cursor-pointer, so each announced itself as pressable and none of them
+    // acknowledged a press.
+    //
+    // Measured on real elements in the real cascade rather than by reading the
+    // stylesheet back, for the same reason sections 2-4 are: a rule can be
+    // present and apply to nothing, which is exactly what :where() did to the
+    // first draft of this contract.
+    {
+      // NO INNER FUNCTION IN HERE. tsx compiles this file with esbuild's
+      // keepNames, which rewrites a named inner function into a call to a
+      // `__name` helper — a helper that exists in Node and not in the page, so
+      // the browser answered "__name is not defined" and nothing was measured.
+      await page.evaluate(() => {
+        const style = "position:fixed;left:8px;width:120px;height:44px;z-index:99999";
+        // The card shape: a label that CONTAINS its control.
+        const card = document.createElement("label");
+        card.id = "probe-radio";
+        card.setAttribute("style", `${style};top:8px`);
+        card.innerHTML = '<input type="radio" name="probe"> Card';
+        document.body.appendChild(card);
+        // And the shape that must NOT be treated as one: a caption for a field
+        // that sits elsewhere. Clickable in the strict sense, not a control.
+        const caption = document.createElement("label");
+        caption.id = "probe-caption";
+        caption.setAttribute("style", `${style};top:60px`);
+        caption.textContent = "Your email";
+        document.body.appendChild(caption);
+      });
+
+      const cardRest = await styleOf(page, "#probe-radio");
+      assert("a label wrapping a radio opts out of the double-tap wait",
+        /manipulation/.test(cardRest.touchAction), cardRest.touchAction);
+
+      const cardPressed = await whilePressed(page, "#probe-radio", () => styleOf(page, "#probe-radio"));
+      assert("  and it visibly acknowledges the press",
+        cardPressed.transform !== cardRest.transform || cardPressed.opacity !== cardRest.opacity,
+        `rest ${cardRest.transform}/${cardRest.opacity} vs pressed ${cardPressed.transform}/${cardPressed.opacity}`);
+      assert("  by scaling down, like every other control",
+        cardPressed.transform.startsWith("matrix(0.97"), cardPressed.transform);
+
+      // THE INVERSE, AND THE REASON THE SELECTOR IS NOT JUST `label`.
+      const capRest = await styleOf(page, "#probe-caption");
+      const capPressed = await whilePressed(page, "#probe-caption", () => styleOf(page, "#probe-caption"));
+      assert("a caption label is left alone",
+        capPressed.transform === capRest.transform && capPressed.opacity === capRest.opacity,
+        `rest ${capRest.transform}/${capRest.opacity} vs pressed ${capPressed.transform}/${capPressed.opacity}`);
+
+      await page.evaluate(() => {
+        document.getElementById("probe-radio")?.remove();
+        document.getElementById("probe-caption")?.remove();
+      });
+
+      // AND THE SHAPE IS REALLY IN THE PRODUCT, so this rule is not governing
+      // a shape nobody uses. Counted, not listed: a list of the four files
+      // here would be the hand-maintained copy this repository keeps being bitten
+      // by, and it would go stale the first time one of them was renamed.
+      const tsx = await import("fs").then((fs) =>
+        import("path").then(({ join }) => ({ fs, join })));
+      const roots = ["app", "components"];
+      let cards = 0;
+      const walk = (dir: string): void => {
+        for (const e of tsx.fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = tsx.join(dir, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (e.name.endsWith(".tsx")) {
+            const src = tsx.fs.readFileSync(p, "utf8");
+            // A <label …> whose element contains an <input type="radio"|"checkbox">
+            // before the matching </label>.
+            for (const m of src.matchAll(/<label\b[\s\S]*?<\/label>/g)) {
+              if (/<input[^>]*type=["'](radio|checkbox)["']/.test(m[0])) cards++;
+            }
+          }
+        }
+      };
+      for (const r of roots) walk(tsx.join(process.cwd(), r));
+      assert("the product really does build controls this way",
+        cards > 0, `${cards} label-wrapped radio/checkbox controls found`);
+      console.log(`      (${cards} found)`);
+    }
   } finally {
     await browser?.close();
     await server.close();

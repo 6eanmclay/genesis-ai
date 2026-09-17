@@ -461,6 +461,7 @@ body {
  */
 button, [role="button"], [role="tab"], [role="menuitem"], summary,
 input[type="submit"], input[type="button"], input[type="reset"],
+label:has(input[type="radio"]), label:has(input[type="checkbox"]),
 [data-interactive="true"] {
   touch-action: manipulation;
 }
@@ -472,10 +473,37 @@ button:not(:disabled):not([aria-disabled="true"]):active,
 summary:active,
 input[type="submit"]:not(:disabled):active,
 input[type="button"]:not(:disabled):active,
-input[type="reset"]:not(:disabled):active {
+input[type="reset"]:not(:disabled):active,
+label:has(input[type="radio"]):active,
+label:has(input[type="checkbox"]):active {
   transform: scale(0.97);
   opacity: 0.85;
 }
+
+/* ---- THE GAP AN AUDIT FOUND, NOT A GUESS (2026-09-17) ----
+ *
+ * The two `label:has(…)` selectors above were added after sweeping the product
+ * for the inverse of this contract: things that LOOK interactive and things
+ * that ARE, and where the two lists disagree.
+ *
+ * A label that wraps its own radio or checkbox is a control — the whole card
+ * is the tap target, and the input inside is usually sr-only. Four of them are
+ * among the most consequential surfaces we have:
+ *
+ *   app/store/[slug]/PaymentMethodChoice.tsx     how the customer pays
+ *   app/store/[slug]/ship/[productId]/…          which shipping rate
+ *   app/dashboard/promotions/CreatePromotionForm what kind of promotion
+ *   app/j4/ReferenceProposalCard.tsx             accepting J4's reading
+ *
+ * Every one of them already carried `cursor-pointer`, so each was ANNOUNCING
+ * itself as pressable, and none of them acknowledged the press. On the first
+ * of those a customer taps a payment method and nothing moves.
+ *
+ * `label` alone would be wrong and is deliberately not what is written here: a
+ * label sitting above a text field is technically clickable — it focuses the
+ * field — but it does not read as a control and must not behave like one. The
+ * rule is "a label that CONTAINS its control", which is the card shape.
+ */
 
 /* A row or card that opens something is a real control and says so with
  * data-interactive. Adding the attribute is the author declaring "this opens
