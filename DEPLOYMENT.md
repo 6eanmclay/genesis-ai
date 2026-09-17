@@ -65,33 +65,53 @@ is on `COMPLIANCE.md`'s decision list rather than being quietly changed back.
 
 ---
 
-## Schema migrations — the section below describes a gate that is not there
+## Schema migrations — THE GATE IS BACK (U7, 2026-09-17)
 
-> **STALE, AND CONFIRMED STALE BY A PRODUCTION BUILD LOG (2026-08-25).**
+> **CURRENT, AND THE MECHANISM IS TESTED.** Sean decided U7 on 2026-09-17:
+> *"Reinstate the review gate before production migrations. I do not want schema
+> migrations reaching production automatically without a review checkpoint."*
 >
-> Everything from here to the end of this section describes the state after the
-> gate was added on 2026-08-01. The gate was reversed on 2026-08-13 and this
-> section was never updated, which is exactly the drift §"Correction — the gate
-> is not there" above already records.
+> This heading has now been wrong in both directions, so the rule for changing
+> it is: **the gate and this section move together, or neither moves.** The last
+> two commits that changed it updated nothing here, and the docs described a
+> gate that was not there for a week — `COMPLIANCE.md` §46, found only because
+> somebody went to apply a migration by hand and discovered the push had already
+> done it.
 >
-> The deploy of `892f67b` on 2026-08-25 settles it with direct evidence rather
-> than inference. From the Vercel build log:
+> ### What the build does now
 >
-> ```
-> > node scripts/migrate-deploy.mjs && next build
-> migrate: using DATABASE_URL_UNPOOLED (direct connection)
-> 91 migrations found in prisma/migrations
-> No pending migrations to apply.
-> ```
+> `build` still runs `node scripts/migrate-deploy.mjs && next build`. The script
+> asks `scripts/lib/migrationGate.mjs` first:
 >
-> **`package.json`'s build script DOES run migrations, on every push to
-> `master`.** That deploy happened to carry none, which is why it was safe; a
-> deploy that carries one will apply it to production with no review step.
+> | situation | what happens |
+> |---|---|
+> | `VERCEL_ENV` is not `production` | migrates, exactly as before — preview and local have no customer data |
+> | production, nothing pending | proceeds; the overwhelming majority of pushes |
+> | production, something pending, **not authorised** | **REFUSES and fails the build** |
+> | production, pending set **exactly authorised** | applies those migrations and says which |
 >
-> The text below is kept rather than deleted because the *safe order* it
-> describes is still the right procedure — it is the opening claim that is
-> false. Whether to reinstate the gate remains Sean's decision and is on
-> `COMPLIANCE.md`'s list.
+> ### Why it fails the build rather than just skipping
+>
+> Skipping is what `5002093` did, and it left a second hole: a push whose code
+> needs a new column builds fine and then fails at **runtime**, because nothing
+> notices the migration was never applied. Failing the build is the safe
+> direction — production keeps serving the previous deployment, unchanged, and
+> nothing is half-applied.
+>
+> ### The authorisation is not a boolean
+>
+> `ALLOW_PRODUCTION_MIGRATION` must equal the **exact set** of pending migration
+> names, comma-separated. `1`, `true` and `yes` authorise nothing. A value left
+> set from a previous deploy names migrations that are no longer pending, so it
+> cannot wave through whatever arrives next — which is the failure mode of every
+> "set a flag to allow it" gate.
+>
+> The refusal prints the pending names, the `npm run migrate:deploy` command, and
+> the exact value to paste. `verify-migration-gate` asserts all of that, and
+> asserts the build still exits non-zero on a refusal — a refusal that lets the
+> build continue is the whole gate gone.
+>
+> The procedure below is unchanged and is still the right order.
 
 `package.json`'s `build` script no longer runs `prisma migrate deploy`. It used to — every build, on every push to `master`, silently applied any pending migration to the **production** database with no review step. That's what changed, and why:
 
