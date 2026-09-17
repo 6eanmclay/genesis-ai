@@ -128,19 +128,58 @@ or a decision above.
 C1, C2 and C3 are shipped. Nothing further in Connections can be completed
 without one of:
 
-| what is needed | unblocks |
-|---|---|
-| Meta app registration → **Meta app review** | Facebook + Instagram connect, then social publishing |
-| TikTok app registration → **TikTok app review** | TikTok connect, then social publishing |
-| `MAILCHIMP_CLIENT_ID` / `_SECRET` | Mailchimp connect |
-| `GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` | Google Calendar connect (**U3**: the app is unpublished, so Google expires every refresh token after 7 days) |
-| `QUICKBOOKS_CLIENT_ID` / `_SECRET` + **re-consent** (**U2**) | QuickBooks, dead since 2026-08-01 |
-| `SQUARE_CLIENT_ID` / `_SECRET` | Square |
-| `XERO_CLIENT_ID` / `_SECRET` | Xero |
-| `PRINTFUL_CLIENT_ID` / `_SECRET` | Printful connect and the live economics check (**D4**) |
-| **EasyPost account verification** (**U6**) | live labels; also the first real provider signature this system has ever seen (**E13**) |
-| per-store Stripe reconnection (**U4**) | six stores with live/test key mismatches |
+### Corrected 2026-09-17 by the closure audit
 
-Each connector's requirement above is read from its own `configured()` and is
-asserted true-and-false by `verify-configured-truthfulness`, so this table
-cannot drift from the code without a suite going red.
+The first version of this table was **wrong on three rows**. It listed Google
+Calendar, QuickBooks and Printful as waiting on credentials. Production already
+holds all six of those variables — checked by listing production's variable
+NAMES, and confirmed against the live `StoreIntegration` rows. Their blockers
+are real but are something else entirely, and calling them "needs a credential"
+would have had Sean go looking for something he had already supplied.
+
+**Production holds:** `GOOGLE_CALENDAR_*`, `QUICKBOOKS_*`, `PRINTFUL_*`,
+`STRIPE_*`, `ELEVENLABS_*`, `ANTHROPIC_API_KEY`, `INTEGRATION_ENCRYPTION_KEY`.
+
+**Production does NOT hold:** `MAILCHIMP_*`, `FACEBOOK_*`, `TIKTOK_*`,
+`SQUARE_*`, `XERO_*`, `ALIEXPRESS_*`, `EASYPOST_*`, `RESEND_API_KEY` /
+`EMAIL_FROM_ADDRESS`.
+
+**Live connection state, 18 `StoreIntegration` rows:**
+
+| provider | state |
+|---|---|
+| PRINTFUL | **6 CONNECTED, all synced today, 0 failures** |
+| MAILCHIMP | 1 CONNECTED, synced today, 0 failures — on the **legacy pasted key**, which is why it works without `MAILCHIMP_*` |
+| PAYPAL | 2 CONNECTED, synced today |
+| STRIPE | 1 CONNECTED; **6 FAILED** on testmode/live key mismatch (**U4**) |
+| GOOGLE_CALENDAR | 1 CONNECTED but **23 consecutive failures**, last synced 2026-08-06 |
+| QUICKBOOKS | 1 CONNECTED but **26 consecutive failures**, last synced 2026-08-01 |
+| SQUARE, XERO, FACEBOOK, INSTAGRAM, TIKTOK, TWILIO, ALIEXPRESS, EASYPOST | **no rows at all** |
+
+### What each remaining item actually waits on
+
+| # | what is needed | category | unblocks |
+|---|---|---|---|
+| 1 | **Meta app registration → Meta app review** | provider action | `FACEBOOK_CLIENT_ID`/`_SECRET` become obtainable; Facebook + Instagram connect; then a publisher |
+| 2 | **TikTok app registration → TikTok app review** | provider action | `TIKTOK_CLIENT_KEY`/`_SECRET`; TikTok connect; then a publisher |
+| 3 | **Publish the Google Cloud OAuth consent screen** (**U3**) | provider action | stops Google expiring every refresh token after 7 days. **Credentials are already set** — this is why Google Calendar has failed 23 times since 2026-08-06 |
+| 4 | **Re-authorize QuickBooks** (**U2**) | account action | a retired refresh token can only be replaced by fresh consent. **Credentials are already set** — 26 failures since 2026-08-01 |
+| 5 | **Reconnect six stores' Stripe** (**U4**) | account action | the six FAILED rows; `lastError` names the exact account each time |
+| 6 | **EasyPost account verification** (**U6**) → then `EASYPOST_API_KEY`, `EASYPOST_WEBHOOK_SECRET` | provider action, then credential | live labels, and the **first real provider signature this system has ever seen** (**E13**) |
+| 7 | `MAILCHIMP_CLIENT_ID` / `_SECRET` | credential | **NEW** Mailchimp connections only. The existing one is healthy on a legacy key and is unaffected |
+| 8 | `SQUARE_CLIENT_ID` / `_SECRET` | credential | Square |
+| 9 | `XERO_CLIENT_ID` / `_SECRET` | credential | Xero |
+| 10 | `ALIEXPRESS_APP_KEY` / `_SECRET` | credential | AliExpress |
+
+**Not blocked, and not a credential: D4, the Printful live economics check.**
+`PRINTFUL_CLIENT_ID`/`_SECRET` are set and six stores are connected and syncing,
+so `scripts/check-printful-economics-live.ts` can run today. It is a read-only
+check that calls Printful's own API with Sean's production credentials, so it is
+his to authorise rather than something to run unasked — but it is **not blocked**
+and this plan previously said it was.
+
+Each connector's credential requirement is read from its own `configured()` and
+asserted true-and-false by `verify-configured-truthfulness`, so the variable
+names above cannot drift from the code without a suite going red. What that
+suite cannot see is whether a variable is set in **production** or whether an
+account is connected, which is what this audit checked separately.
