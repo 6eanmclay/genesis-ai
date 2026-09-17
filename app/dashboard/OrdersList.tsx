@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { J4Icon } from "./J4Icon";
 import { useState, useTransition } from "react";
 import { toggleOrderFulfilled, purchaseShippingLabel } from "./actions";
 import type { OrderShippingAddress } from "@/lib/orders/shippingAddress";
@@ -212,158 +213,181 @@ function OrderRowCard({
      */
   return (
     <li className={`${COMMERCE_ROW} relative`} data-interactive="true">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          {/* HOW MANY, next to what (2026-08-22, P1.7). The lifecycle the
-              milestone names lists "customer / product / QUANTITY / payment
-              status / shipping address / fulfillment status / tracking / order
-              date". Every one of those was on this card except the quantity,
-              which has existed on Order since 2026-08-20 and was rendered
-              nowhere. An owner packing a hand-wound product read "Tensor Ring
-              — $255.00" and had to divide to learn it was three of them. */}
-          {/* The way in to the whole record (2026-08-25). The row carries what
-              fits on a row; everything else about an order — the transaction
-              id, the ship-from address, whether the buyer was ever told it
-              shipped — lives on the detail page and had nowhere to be shown. */}
-          <Link
-            href={`${basePath}/orders/${order.id}`}
-            // `after:absolute after:inset-0` is what turns the row into the
-            // target. The link itself stays exactly where it is and keeps its
-            // own text styling; only its hit area grows to the card.
-            className="text-sm font-medium text-black after:absolute after:inset-0 after:content-[''] hover:underline dark:text-zinc-50"
-          >
-            {order.productName}
-            {order.quantity > 1 && (
-              <span className="ml-1.5 font-normal text-zinc-500">&times;{order.quantity}</span>
-            )}
-          </Link>
-          <p className="text-xs text-zinc-500">{order.buyerEmail}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-              isFulfilled
-                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-            }`}
-          >
-            {isFulfilled ? "Fulfilled" : "Needs fulfillment"}
-          </span>
-          {/* ============ "PAID  PAID" (2026-09-17) ======================
-           *
-           * Seen on a real production screenshot: every unfulfilled order on
-           * Cubit & Coil rendered NEEDS FULFILLMENT, then PAID, then PAID
-           * again — two identical pills side by side.
-           *
-           * Neither is wrong and neither is redundant in general. `status` is
-           * the MONEY (paid, refunded); `stage` is the LIFECYCLE (paid →
-           * being prepared → on its way → delivered). They coincide only while
-           * an order is paid and nothing has happened to it yet — which is
-           * exactly the state most orders on a young shop are in, so the one
-           * case where they agree is the common one.
-           *
-           * So the money pill is dropped only when it would repeat the stage
-           * word for word. "Paid / On its way" still shows both, because there
-           * the two say different things. No information is removed; a
-           * duplicate is. */}
-          {(STATUS_LABEL[order.status] ?? order.status) !== STAGE_LABEL[stage] && (
-            <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-white/10 dark:text-zinc-400">
-              {STATUS_LABEL[order.status] ?? order.status}
-            </span>
-          )}
-          {/* WHERE THE PARCEL IS, derived rather than stored, so it cannot
-              drift from the fields it reads. Delivered outranks shipped only
-              because delivery now comes from the carrier — before the tracker
-              ingestion existed there was nothing to outrank it with. */}
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-              stage === "delivered"
-                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                : "bg-black/5 text-zinc-600 dark:bg-white/10 dark:text-zinc-400"
-            }`}
-          >
-            {STAGE_LABEL[stage]}
-          </span>
-        </div>
-      </div>
+      {/* ============ THIS ROW OPENS SOMETHING, AND SAYS SO ============
+          Sean: an order was "presented as a large block of information with
+          no sufficiently clear 'this opens something' target." The stretched
+          link made the whole row pressable; it did not make the row LOOK
+          pressable, and an affordance nobody can see is not an affordance.
 
-      {order.shippingAddress && (
-        <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-          Ship to: {formatAddress(order.shippingAddress)}
-        </p>
-      )}
-      {!order.shippingAddress && (
-        <p className="mt-2 text-xs text-zinc-500">No shipping address on file.</p>
-      )}
+          A chevron rather than a card. Commerce's ledger is deliberately a
+          ruled sheet - "rows are separated by rules rather than by gaps
+          between objects... no border and no radius" (lib/dashboard/rooms.ts,
+          approved) - so putting a box around each order would answer this
+          complaint by undoing a settled decision. The chevron says the same
+          thing and keeps the sheet.
 
-      {order.trackingNumber ? (
-        <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-          Shipped via {order.carrier ?? "an unnamed carrier"} — tracking {order.trackingNumber}
-          {order.trackingUrl && (
-            <>
-              {" "}
-              ·{" "}
-              <a href={order.trackingUrl} target="_blank" rel="noreferrer" className="relative z-10 underline">
-                Track
-              </a>
-            </>
-          )}
-          {order.labelUrl && (
-            <>
-              {" "}
-              ·{" "}
-              <a href={order.labelUrl} target="_blank" rel="noreferrer" className="relative z-10 underline">
-                Label
-              </a>
-            </>
-          )}
-        </p>
-      ) : null}
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-zinc-500">
-          {order.paymentProvider} &middot; {order.createdAt.toLocaleDateString()}
-          {canViewRevenue && order.amountInCents !== null && (
-            <> &middot; {formatMoney(order.amountInCents, currency)}</>
-          )}
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* PARTNER-SHIPPED ORDERS GET NO LABEL BUTTON (2026-08-26), and this
-              is not a block — the parcel is in somebody else's warehouse and
-              buying postage for it here would produce a label for a box that
-              will never be attached to anything. */}
-          {canManage && order.shippedBy === "PARTNER" && order.shippingAddress && !order.trackingNumber && (
-            <p className="text-xs text-zinc-500">Your fulfilment partner ships this one.</p>
-          )}
-          {canManage && order.shippedBy === "OWNER" && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
-            <BuyLabelForm orderId={order.id} parcel={order.parcel} />
-          )}
-          {/* AND WHEN IT CANNOT, WHY (2026-08-25). This branch used to be
-              nothing at all: a paid order with a delivery address and no way to
-              ship it, and no reason on the screen. Shown only for an order that
-              would otherwise qualify, so a fulfilled or unaddressed order does
-              not carry an explanation for a button it was never going to have. */}
-          {canManage && order.shippedBy === "OWNER" && !canBuyLabel && order.shippingAddress && !order.trackingNumber && (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              {labelBlockedBy === "return_address"
-                ? "Add your ship-from address below to buy a label for this order."
-                : "Shipping isn't connected yet, so a label can't be bought for this order."}
-            </p>
-          )}
-          {/* No "mark as unfulfilled" once a label exists — the parcel is in the
-              post and the buyer has tracking, so the server refuses it. Offering
-              a button that throws is worse than not offering it. Marking as
-              fulfilled is still available for orders shipped by hand. */}
-          {canManage && !(isFulfilled && order.trackingNumber) && (
-            <button
-              disabled={isPending}
-              onClick={() => startTransition(() => toggleOrderFulfilled(order.id))}
-              className="relative z-10 rounded-full border border-black/[.08] px-3 py-1 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
+          Aligned to the top rather than centred: it points at the product
+          name, which is what it opens. aria-hidden because the link beside it
+          already carries the destination - a screen reader does not need to
+          be told twice. */}
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            {/* HOW MANY, next to what (2026-08-22, P1.7). The lifecycle the
+                milestone names lists "customer / product / QUANTITY / payment
+                status / shipping address / fulfillment status / tracking / order
+                date". Every one of those was on this card except the quantity,
+                which has existed on Order since 2026-08-20 and was rendered
+                nowhere. An owner packing a hand-wound product read "Tensor Ring
+                — $255.00" and had to divide to learn it was three of them. */}
+            {/* The way in to the whole record (2026-08-25). The row carries what
+                fits on a row; everything else about an order — the transaction
+                id, the ship-from address, whether the buyer was ever told it
+                shipped — lives on the detail page and had nowhere to be shown. */}
+            <Link
+              href={`${basePath}/orders/${order.id}`}
+              // `after:absolute after:inset-0` is what turns the row into the
+              // target. The link itself stays exactly where it is and keeps its
+              // own text styling; only its hit area grows to the card.
+              className="text-sm font-medium text-black after:absolute after:inset-0 after:content-[''] hover:underline dark:text-zinc-50"
             >
-              {isPending ? "Updating..." : isFulfilled ? "Mark as unfulfilled" : "Mark as fulfilled"}
-            </button>
-          )}
+              {order.productName}
+              {order.quantity > 1 && (
+                <span className="ml-1.5 font-normal text-zinc-500">&times;{order.quantity}</span>
+              )}
+            </Link>
+            <p className="text-xs text-zinc-500">{order.buyerEmail}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                isFulfilled
+                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+              }`}
+            >
+              {isFulfilled ? "Fulfilled" : "Needs fulfillment"}
+            </span>
+            {/* ============ "PAID  PAID" (2026-09-17) ======================
+             *
+             * Seen on a real production screenshot: every unfulfilled order on
+             * Cubit & Coil rendered NEEDS FULFILLMENT, then PAID, then PAID
+             * again — two identical pills side by side.
+             *
+             * Neither is wrong and neither is redundant in general. `status` is
+             * the MONEY (paid, refunded); `stage` is the LIFECYCLE (paid →
+             * being prepared → on its way → delivered). They coincide only while
+             * an order is paid and nothing has happened to it yet — which is
+             * exactly the state most orders on a young shop are in, so the one
+             * case where they agree is the common one.
+             *
+             * So the money pill is dropped only when it would repeat the stage
+             * word for word. "Paid / On its way" still shows both, because there
+             * the two say different things. No information is removed; a
+             * duplicate is. */}
+            {(STATUS_LABEL[order.status] ?? order.status) !== STAGE_LABEL[stage] && (
+              <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-white/10 dark:text-zinc-400">
+                {STATUS_LABEL[order.status] ?? order.status}
+              </span>
+            )}
+            {/* WHERE THE PARCEL IS, derived rather than stored, so it cannot
+                drift from the fields it reads. Delivered outranks shipped only
+                because delivery now comes from the carrier — before the tracker
+                ingestion existed there was nothing to outrank it with. */}
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                stage === "delivered"
+                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                  : "bg-black/5 text-zinc-600 dark:bg-white/10 dark:text-zinc-400"
+              }`}
+            >
+              {STAGE_LABEL[stage]}
+            </span>
+          </div>
         </div>
+
+        {order.shippingAddress && (
+          <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+            Ship to: {formatAddress(order.shippingAddress)}
+          </p>
+        )}
+        {!order.shippingAddress && (
+          <p className="mt-2 text-xs text-zinc-500">No shipping address on file.</p>
+        )}
+
+        {order.trackingNumber ? (
+          <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+            Shipped via {order.carrier ?? "an unnamed carrier"} — tracking {order.trackingNumber}
+            {order.trackingUrl && (
+              <>
+                {" "}
+                ·{" "}
+                <a href={order.trackingUrl} target="_blank" rel="noreferrer" className="relative z-10 underline">
+                  Track
+                </a>
+              </>
+            )}
+            {order.labelUrl && (
+              <>
+                {" "}
+                ·{" "}
+                <a href={order.labelUrl} target="_blank" rel="noreferrer" className="relative z-10 underline">
+                  Label
+                </a>
+              </>
+            )}
+          </p>
+        ) : null}
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-zinc-500">
+            {order.paymentProvider} &middot; {order.createdAt.toLocaleDateString()}
+            {canViewRevenue && order.amountInCents !== null && (
+              <> &middot; {formatMoney(order.amountInCents, currency)}</>
+            )}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* PARTNER-SHIPPED ORDERS GET NO LABEL BUTTON (2026-08-26), and this
+                is not a block — the parcel is in somebody else's warehouse and
+                buying postage for it here would produce a label for a box that
+                will never be attached to anything. */}
+            {canManage && order.shippedBy === "PARTNER" && order.shippingAddress && !order.trackingNumber && (
+              <p className="text-xs text-zinc-500">Your fulfilment partner ships this one.</p>
+            )}
+            {canManage && order.shippedBy === "OWNER" && canBuyLabel && order.shippingAddress && !order.trackingNumber && (
+              <BuyLabelForm orderId={order.id} parcel={order.parcel} />
+            )}
+            {/* AND WHEN IT CANNOT, WHY (2026-08-25). This branch used to be
+                nothing at all: a paid order with a delivery address and no way to
+                ship it, and no reason on the screen. Shown only for an order that
+                would otherwise qualify, so a fulfilled or unaddressed order does
+                not carry an explanation for a button it was never going to have. */}
+            {canManage && order.shippedBy === "OWNER" && !canBuyLabel && order.shippingAddress && !order.trackingNumber && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {labelBlockedBy === "return_address"
+                  ? "Add your ship-from address below to buy a label for this order."
+                  : "Shipping isn't connected yet, so a label can't be bought for this order."}
+              </p>
+            )}
+            {/* No "mark as unfulfilled" once a label exists — the parcel is in the
+                post and the buyer has tracking, so the server refuses it. Offering
+                a button that throws is worse than not offering it. Marking as
+                fulfilled is still available for orders shipped by hand. */}
+            {canManage && !(isFulfilled && order.trackingNumber) && (
+              <button
+                disabled={isPending}
+                onClick={() => startTransition(() => toggleOrderFulfilled(order.id))}
+                className="relative z-10 rounded-full border border-black/[.08] px-3 py-1 text-xs disabled:opacity-50 dark:border-white/[.145] dark:text-zinc-50"
+              >
+                {isPending ? "Updating..." : isFulfilled ? "Mark as unfulfilled" : "Mark as fulfilled"}
+              </button>
+            )}
+          </div>
+        </div>
+        </div>
+        <J4Icon name="chevron" size={16} aria-hidden
+          className="mt-0.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
       </div>
     </li>
   );

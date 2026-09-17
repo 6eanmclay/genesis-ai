@@ -226,6 +226,26 @@ async function main() {
 
         assert("pressing the buyer's email — inert text — reaches the order link",
           hits.ok, `the tap landed on ${hits.why}`);
+
+        // ============ AND IT LOOKS PRESSABLE, NOT ONLY IS IT ===========
+        //
+        // The hit-test above proves the row RESPONDS. It says nothing about
+        // whether anybody would think to press it, and that was Sean's actual
+        // complaint: "no sufficiently clear 'this opens something' target."
+        // An invisible affordance is not an affordance, and every assertion
+        // written before this one would have passed on a row that looked like
+        // a paragraph.
+        const chevron = row.locator('svg[aria-hidden="true"]').last();
+        const chevronBox = await chevron.boundingBox();
+        assert("  and the row shows that it opens", !!chevronBox,
+          "no chevron on the row");
+        if (chevronBox && rowBox) {
+          // ON THE TRAILING EDGE, where a list puts it, rather than anywhere
+          // it happened to land in the flow.
+          assert("  on the row's trailing edge",
+            chevronBox.x > rowBox.x + rowBox.width * 0.8,
+            `chevron at ${Math.round(chevronBox.x)}, row ends at ${Math.round(rowBox.x + rowBox.width)}`);
+        }
       }
 
       // BACK TO THE LIST for the section that follows, which clicks the link
