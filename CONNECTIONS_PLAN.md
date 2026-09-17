@@ -93,20 +93,23 @@ finished behind it. Live label purchase stays blocked until the account clears.
 
 ---
 
-## 7. Decisions, kept separate from engineering
+## 7. Decisions — ANSWERED BY SEAN 2026-09-17
 
-None of these is a task and none is blocked on code.
+All eight were put to Sean and all eight came back. Seven are "leave it as it
+is", which is a decision and is recorded as one: the standing behaviour is now
+deliberate rather than merely unreviewed, and none of them may be changed
+without him reopening the row.
 
-| # | decision |
-|---|---|
-| **U7** | whether the migration gate returns — every push to `master` migrates production with no review step |
-| **U8** | the live end-to-end payment test; the money path has never moved real money under this code |
-| **E18** | whether Genesis collects tax at all. If yes it is Stripe Tax plus a column for `total_details.amount_tax` — real work, not a display fix |
-| **E12** | switching security-signal deletion on; it deletes evidence, so the horizons want reading against a real footprint first |
-| **E12b** | switching the retention sweep on; it clears stored provider delivery bodies at 30 days |
-| **E13b** | retention horizons for five tables nobody has decided about, including the audit trail and the idempotency record |
-| **E16** | how long a transaction record must be kept after an account closes — the one genuinely legal question, deliberately not guessed |
-| **E17** | whether closing an account unpublishes its storefronts, transfers them, or leaves them running |
+| # | decision | standing instruction |
+|---|---|---|
+| **U7** | **REINSTATE the review gate.** "I do not want schema migrations reaching production automatically without a review checkpoint." | **DECIDED — this is now engineering work.** See §10. |
+| **U8** | **Do not run a real purchase yet.** Explicitly pending Sean's authorization. | The money path stays unproven against real money, knowingly. Do not run one. |
+| **E18** | **Leave tax collection unchanged.** Do not implement Stripe Tax. | Orders keep saying "Not recorded — check Stripe" rather than printing a zero, which remains the honest answer. |
+| **E12** | **Leave security-signal pruning in dry-run.** | No evidence is deleted until the real footprint has been reviewed. The handler's dry-run default stands; do not add the `apply` flag. |
+| **E12b** | **Leave the retention sweep inert.** | Stored provider delivery bodies are kept. Do not enqueue it with `apply`. |
+| **E13b** | **Leave the horizons undecided and inert.** | Explicitly: **do not introduce deletion that could make `OutboundOperation` idempotency keys reusable** — a deleted row makes its key reusable and a replay could genuinely happen twice. |
+| **E16** | **Pending.** Sean will not make a legal-retention decision without the appropriate legal basis. | Closure keeps the business's orders, amounts, customer emails and provider ids indefinitely, and that continues. |
+| **E17** | **Leave closed-account storefront behaviour unchanged.** | A closed account's stores keep `published: true` and keep taking checkouts. Do not unpublish, transfer, or alter this. |
 
 ---
 
@@ -169,14 +172,81 @@ would have had Sean go looking for something he had already supplied.
 | 7 | `MAILCHIMP_CLIENT_ID` / `_SECRET` | credential | **NEW** Mailchimp connections only. The existing one is healthy on a legacy key and is unaffected |
 | 8 | `SQUARE_CLIENT_ID` / `_SECRET` | credential | Square |
 | 9 | `XERO_CLIENT_ID` / `_SECRET` | credential | Xero |
-| 10 | `ALIEXPRESS_APP_KEY` / `_SECRET` | credential | AliExpress |
+**AliExpress is NOT on this list** (Sean, 2026-09-17): "not a provider we are
+pursuing. Do not ask me for its credentials or count it as unfinished work." The
+connector stays built and registered — it is not deleted, and
+`verify-configured-truthfulness` still proves its `configured()` honest — but it
+is not unfinished work and its credentials are not wanted.
+
+---
+
+## 9a. Zendrop and Spocket — wanted, and traced before assuming
+
+Sean, 2026-09-17: these are the two sourcing/fulfilment connections actually
+wanted. Neither exists in this repository — no connector, no catalog entry, no
+reference anywhere. **Neither is built, and neither may be built yet**, because
+"do not build them if external/provider requirements are not established" and
+for one of them they are not.
+
+### Zendrop — partially established
+
+What the provider's own developer documentation states today:
+
+| | |
+|---|---|
+| surface | an **MCP server**, described as "a secure API layer that enables AI assistants to interact with your Zendrop store". **Not** a conventional merchant REST API — that distinction matters before anyone designs against it |
+| auth | **OAuth 2.0, Authorization Code with PKCE** ("recommended for apps"), or scoped **access tokens** |
+| scopes | `catalog:read`, `orders:read`, `orders:write`, `stores:read`, `stores:write`, `my_products:write`, `billing:read` |
+| capabilities | product discovery, order management (counts, statuses, issues), store/fulfilment settings, inventory and listings |
+| rate limits | 120 reads/min, 30 writes/min, 10 fulfilment actions/min |
+| webhooks | **not mentioned in the documentation.** Absence of a statement is not a statement of absence — it is unestablished |
+
+**The gating unknown, and it is the one that decides everything:** the
+documentation says to "generate an access token or OAuth credentials" but does
+**not** say whether an app obtains OAuth client credentials self-serve or
+through a partner/approval process. Until that is known, nobody can say whether
+Zendrop is a credential Sean can supply or a provider review he must pass —
+which is the difference between two different rows of this plan.
+
+### Spocket — NOT established
+
+**Nothing about Spocket's integration requirements could be confirmed from a
+first-party source.** Third-party write-ups describe a "Developer Settings →
+API Key" flow, and an API directory carries a Spocket entry whose
+authentication, developer-docs and app-listing fields are all **blank**. No
+official Spocket developer portal or API reference was found.
+
+So the honest state is: a Spocket API is asserted by others and documented by
+nobody we can cite. **Assuming an API-key model on that basis is exactly the
+assumption Sean's instruction forbids.**
+
+### What would establish them
+
+Neither needs engineering yet. Both need a first-party answer:
+
+| provider | the question |
+|---|---|
+| Zendrop | how does an application obtain OAuth client credentials — self-serve in an account, or partner/approval? And does it deliver webhooks? |
+| Spocket | is there a first-party API at all, and what are its auth model, endpoints and access requirements? A Spocket account with developer settings visible would answer it |
+
+Once answered, each becomes an ordinary connector: a module in
+`lib/integrations/` and one line in the registry, with `configured()` and — if
+the provider signs deliveries — `webhooks`, both already governed by
+`verify-configured-truthfulness` and `verify-webhook-verifier-contract`.
+
+---
 
 **Not blocked, and not a credential: D4, the Printful live economics check.**
 `PRINTFUL_CLIENT_ID`/`_SECRET` are set and six stores are connected and syncing,
-so `scripts/check-printful-economics-live.ts` can run today. It is a read-only
-check that calls Printful's own API with Sean's production credentials, so it is
-his to authorise rather than something to run unasked — but it is **not blocked**
-and this plan previously said it was.
+so `scripts/check-printful-economics-live.ts` can run today.
+
+**Classified 2026-09-17 as ACTIONABLE — AWAITING OWNER AUTHORIZATION**, which is
+its own category and deliberately not "credential-blocked". Sean: "this is
+different because the credentials already exist, but it makes a live production
+API call. Do not run it without my explicit authorization."
+
+So it sits in no queue and needs nothing bought or registered. It needs one
+word from Sean, and until then it is not run.
 
 Each connector's credential requirement is read from its own `configured()` and
 asserted true-and-false by `verify-configured-truthfulness`, so the variable
