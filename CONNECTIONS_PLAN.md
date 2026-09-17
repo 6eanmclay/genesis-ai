@@ -334,10 +334,44 @@ a partner API exists — and **the alternatives are explicitly ruled out**: Sean
 2026-09-17, *"Do not create unofficial/browser/scraping integrations to force
 either one into Genesis."*
 
-| provider | state | what would move it |
+### FINAL CLASSIFICATIONS (Sean, 2026-09-17)
+
+**Zendrop — integration path CONFIRMED SUPPORTED AND SELF-SERVE.** Not "unknown"
+and not "partner-gated": a merchant generates an MCP access token inside their
+own Zendrop account, revocable, with no application and no approval. **The
+required dependency is now simply a real Zendrop account and a
+merchant-generated MCP access token.**
+
+**Do not implement a connector that cannot be exercised against a real account.**
+When the account and token exist, it can be built and verified against the
+actual Zendrop endpoint — and not before.
+
+**Two questions stay EXPLICITLY UNESTABLISHED, and neither may be inferred:**
+
+| question | state |
+|---|---|
+| how a PLATFORM registers an OAuth client with Zendrop | **unestablished.** Not documented first-party. Not "probably self-serve because the token is" |
+| whether Zendrop delivers webhooks at all | **unestablished.** The documentation is silent, which is not the same as "no" |
+
+Neither blocks the merchant-token path, and neither may be guessed at to make a
+design look complete.
+
+**Spocket — NO PUBLICLY DOCUMENTED FIRST-PARTY API OR INTEGRATION PATH FOUND.**
+Deliberately not filed as "credentials missing": there is nothing published to
+hold a credential for. Their integrations page names eleven storefront platforms
+and no API, no keys, no developer programme and no custom route.
+
+**Do not build an unofficial connector.** If Spocket is pursued, **the next
+legitimate action is asking Spocket whether a partner or developer API exists.**
+
+**AliExpress remains intentionally out of scope** — not pursued, not counted as
+unfinished, credentials not wanted. The connector stays built and registered.
+
+| provider | final state | the one thing that moves it |
 |---|---|---|
-| **Zendrop** | **shape established, unverifiable** | a Zendrop account + a generated token |
-| **Spocket** | **no published integration path** | a first-party answer from Spocket about a partner API; nothing else is permitted |
+| **Zendrop** | path confirmed supported and self-serve; unverifiable here | a Zendrop account + merchant-generated MCP token |
+| **Spocket** | no publicly documented first-party API/integration path found | a first-party answer from Spocket about a partner API |
+| **AliExpress** | out of scope by decision | nothing — it is not wanted |
 
 ---
 
@@ -374,8 +408,72 @@ that key is absent, it can reach the database and not the supplier. Nothing in
 the code is wrong and nothing further can be learned about `economics()` from
 here.
 
+**FINAL CLASSIFICATION (Sean, 2026-09-17): BLOCKED ON
+`INTEGRATION_ENCRYPTION_KEY` — not on Printful credentials.** The distinction is
+the point: Printful's credentials are present and six stores sync daily, so
+anyone reading "Printful check blocked" would go looking for the wrong thing.
+
+**Standing rules on that key, and they are absolute:** do not rotate it, do not
+copy it anywhere, do not expose it, do not attempt to recover it, and **do not
+build a workaround.** A path around the encryption boundary would be a hole in
+the thing the boundary exists for.
+
+**When the key is legitimately available to the process running the check, D4
+can be executed.** Nothing else about it is outstanding.
+
 Each connector's credential requirement is read from its own `configured()` and
 asserted true-and-false by `verify-configured-truthfulness`, so the variable
 names above cannot drift from the code without a suite going red. What that
 suite cannot see is whether a variable is set in **production** or whether an
 account is connected, which is what this audit checked separately.
+
+---
+
+## 10. CLOSURE — the engineering queue is empty (2026-09-17)
+
+Every engineering-ready item is shipped and live: **C1** Mailchimp's dishonest
+Connect button, **C2** the connector webhook contract, **C3** `configured()`
+truthfulness, **U7** the migration gate. None of them reopens.
+
+**Nothing below is engineering.** Each row names the single external action,
+account, credential or decision that moves it, and nothing else will. The next
+movement comes from one of these — not from another round of speculative work.
+
+### Needs a provider or account action
+
+| # | the exact action | unlocks |
+|---|---|---|
+| 1 | Register a **Meta app**, then pass **Meta app review** | `FACEBOOK_CLIENT_ID`/`_SECRET` become obtainable → Facebook + Instagram connect → then a publisher can be written |
+| 2 | Register a **TikTok app**, then pass **TikTok review** | `TIKTOK_CLIENT_KEY`/`_SECRET` → TikTok connect → then a publisher |
+| 3 | **Publish the Google Cloud OAuth consent screen** (U3) | Stops Google expiring every refresh token after 7 days. Credentials are already set — this is why Google Calendar has 23 consecutive failures since 2026-08-06 |
+| 4 | **Re-authorize QuickBooks** (U2) | A retired refresh token can only be replaced by fresh consent. Credentials already set — 26 failures since 2026-08-01 |
+| 5 | **Reconnect six stores' Stripe** (U4) | The six `FAILED` rows; each `lastError` names the exact account and whether it is a testmode/live mismatch |
+| 6 | **EasyPost account verification** (U6) | Then `EASYPOST_API_KEY` + `EASYPOST_WEBHOOK_SECRET` → live labels, and the first real provider signature this system has ever received (E13) |
+| 7 | Open a **Zendrop account** and generate an **MCP access token** | Zendrop becomes buildable AND verifiable. The path is confirmed supported and self-serve; only the account is missing |
+| 8 | **Ask Spocket** whether a partner/developer API exists | Nothing is published to build against today. This is the only legitimate next step |
+
+### Needs a credential, entered securely — never in chat
+
+| variable(s) | provider | unlocks |
+|---|---|---|
+| `MAILCHIMP_CLIENT_ID`, `MAILCHIMP_CLIENT_SECRET` | Mailchimp developer console | **New** Mailchimp connections. The existing one is healthy on a legacy pasted key and is unaffected |
+| `SQUARE_CLIENT_ID`, `SQUARE_CLIENT_SECRET` | Square developer dashboard | Square |
+| `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` | Xero developer portal | Xero |
+| `INTEGRATION_ENCRYPTION_KEY`, present to the running process | already in production, unrecoverable by reading it back | **D4**. Do not rotate, copy, expose, recover, or work around it |
+
+### Decided, and staying decided
+
+**U7** is implemented. The other seven are standing instructions, not open
+questions: **U8** no live purchase; **E18** no Stripe Tax; **E12** pruning stays
+dry-run; **E12b** sweep inert; **E13b** horizons undecided and **no deletion
+that could make `OutboundOperation` idempotency keys reusable**; **E16** pending
+a legal basis; **E17** closed-account storefronts unchanged.
+
+### Still blocked by their own judgement, not by a missing credential
+
+- **Gap 13** — the ten built connectors declare no webhooks. Their signature
+  schemes cannot be verified against a live account, and an unverifiable
+  implementation is worse than none because it looks finished.
+- **Social publishing** — the registry is deliberately empty and
+  `publisherFor` returns null for all four platforms. Never fake a publisher.
+- **E13** — no real provider has ever signed a request to this system.
