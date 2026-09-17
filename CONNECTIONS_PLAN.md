@@ -115,8 +115,32 @@ None of these is a task and none is blocked on code.
 | # | item | state |
 |---|---|---|
 | **C1** | **Mailchimp offered a Connect button that could only ever throw.** No `configured()`, and the catalog said `api_key` while the connector said `oauth`. | **DONE `4f3fc80`** — and the assertion that should have caught it was a hardcoded list that omitted Mailchimp; it is now a derived rule plus a catalog/connector agreement sweep. |
-| **C2** | **Gap 17 — the connector webhook contract test.** Every connector declaring `webhooks` must fail closed: no secret, wrong signature, hostile payload, and a delivery the pipeline never verified. | ready |
-| **C3** | **`configured()` must be TRUE, not merely declared.** Printful is asserted both ways against the real environment; no other OAuth connector is. A `configured()` that always answers `true` rebuilds C1 somewhere else — and Twilio shipped exactly that once. | ready |
+| **C2** | **Gap 17 — the connector webhook contract test.** Every connector declaring `webhooks` must fail closed. | **DONE `4b78bb7`** — sweeps the registry via a new `allConnectors()`, 73 assertions. The first version was **vacuous** and only sabotage found it: with no secret configured, `verify()` refused before reaching the signature, so a verifier broken to accept unsigned deliveries passed the suite green. It now runs with a secret generated in-process. |
+| **C3** | **`configured()` must be TRUE, not merely declared.** | **DONE `30fafa8`** — every declaring connector proven both ways against the real environment, and the configured / not_connected / connected states held apart. |
 
 Everything else in Connections waits on a credential, an account, an app review,
 or a decision above.
+
+---
+
+## 9. The engineering-ready list is now empty
+
+C1, C2 and C3 are shipped. Nothing further in Connections can be completed
+without one of:
+
+| what is needed | unblocks |
+|---|---|
+| Meta app registration → **Meta app review** | Facebook + Instagram connect, then social publishing |
+| TikTok app registration → **TikTok app review** | TikTok connect, then social publishing |
+| `MAILCHIMP_CLIENT_ID` / `_SECRET` | Mailchimp connect |
+| `GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` | Google Calendar connect (**U3**: the app is unpublished, so Google expires every refresh token after 7 days) |
+| `QUICKBOOKS_CLIENT_ID` / `_SECRET` + **re-consent** (**U2**) | QuickBooks, dead since 2026-08-01 |
+| `SQUARE_CLIENT_ID` / `_SECRET` | Square |
+| `XERO_CLIENT_ID` / `_SECRET` | Xero |
+| `PRINTFUL_CLIENT_ID` / `_SECRET` | Printful connect and the live economics check (**D4**) |
+| **EasyPost account verification** (**U6**) | live labels; also the first real provider signature this system has ever seen (**E13**) |
+| per-store Stripe reconnection (**U4**) | six stores with live/test key mismatches |
+
+Each connector's requirement above is read from its own `configured()` and is
+asserted true-and-false by `verify-configured-truthfulness`, so this table
+cannot drift from the code without a suite going red.
