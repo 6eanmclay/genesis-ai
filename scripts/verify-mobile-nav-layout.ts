@@ -3,11 +3,79 @@ import bcrypt from "bcryptjs";
 import { startTestServer } from "@/scripts/lib/testServer";
 import {
   reserveAt,
+  occupiedAt,
   roomsFitAt,
   MIN_TAP_TARGET_PX,
   PRIMARY_ROOMS,
   J4_DOCK_RESERVE_VAR,
+  J4_DOCK_OCCUPIED_VAR,
 } from "@/lib/dashboard/j4DockLayout";
+
+/**
+ * NOTHING AN OWNER CAN SCROLL TO ENDS UP BEHIND J4.
+ *
+ * ============ WHAT THIS WAS WRITTEN FOR (2026-09-17) ================
+ *
+ * The reserve keeps the five ROOMS out from under J4 and this suite has
+ * asserted that since 2026-09-09. Nothing asserted the same for PAGE CONTENT,
+ * and he is far taller than the bar the rooms sit in — 141px against 56px at
+ * 390px. <main> cleared him with a hand-written pb-28 of 112px, so the last
+ * 29px of every page went behind his helmet.
+ *
+ * It was visible in three separate production screenshots before any check
+ * noticed, because every check was looking at the navigation.
+ *
+ * Measured at the BOTTOM of the page, which is where Sean's requirement lives:
+ * "Content should terminate/scroll above the J4 occupied region, so the user
+ * can always see the last content rather than having it disappear behind the
+ * character."
+ *
+ * Leaves only: a wrapper legitimately spans the page, and it is the text and
+ * the rules and the controls that must not be underneath him. Fixed and sticky
+ * elements are skipped because they are chrome rather than scrollable content
+ * — the room bar itself is one, and it is SUPPOSED to be down there.
+ */
+async function contentUnderJ4(page: Page): Promise<{
+  found: boolean; offenders: string[]; dockTop: number; mainPadding: string;
+}> {
+  await page.evaluate(() => {
+    document.documentElement.style.scrollBehavior = "auto";
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  });
+  await page
+    .waitForFunction(() => {
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
+      return atBottom || document.documentElement.scrollHeight <= window.innerHeight + 4;
+    }, undefined, { timeout: 10_000 })
+    .catch(() => {});
+
+  return page.evaluate(() => {
+    const main = document.querySelector("main");
+    const dock = document.querySelector('[data-testid="j4-dock"]');
+    if (!main || !dock) return { found: false, offenders: ["no main or dock"], dockTop: 0, mainPadding: "" };
+    const d = dock.getBoundingClientRect();
+    const offenders: string[] = [];
+    for (const el of main.querySelectorAll("*")) {
+      if (el.children.length > 0) continue;
+      const s = getComputedStyle(el);
+      if (s.position === "fixed" || s.position === "sticky") continue;
+      if (s.visibility === "hidden" || s.opacity === "0") continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      const overlapsX = Math.min(r.right, d.right) - Math.max(r.left, d.left) > 0;
+      const overlapsY = Math.min(r.bottom, d.bottom) - Math.max(r.top, d.top) > 0;
+      if (overlapsX && overlapsY) {
+        offenders.push(`${el.tagName}.${(el as HTMLElement).className}`.replace(/\s+/g, " ").slice(0, 70));
+      }
+    }
+    return {
+      found: true,
+      offenders: offenders.slice(0, 6),
+      dockTop: Math.round(d.top),
+      mainPadding: getComputedStyle(main).paddingBottom,
+    };
+  });
+}
 
 // NOTHING SITS UNDERNEATH J4 (2026-09-09).
 //
@@ -52,13 +120,14 @@ function overlaps(a: Box, b: Box): boolean {
 // defined` inside the browser - a failure that looks like a broken assertion
 // and is really a transpiler artifact. Everything below is inline.
 async function measure(page: Page) {
-  return page.evaluate((varName: string) => {
+  return page.evaluate((vars: { reserve: string; occupied: string }) => {
     const nav = document.querySelector('[data-testid="mobile-room-bar"]');
     const dockEl = document.querySelector('[data-testid="j4-dock"]');
     const cornerEl = document.querySelector('[data-testid="j4-corner"]');
     const officeEl = document.querySelector('[data-testid="j4-office"]');
+    const groundEl = document.querySelector('[data-testid="j4-dock-ground"]');
 
-    const rects = [nav, dockEl, cornerEl, officeEl].map((el) =>
+    const rects = [nav, dockEl, cornerEl, officeEl, groundEl].map((el) =>
       el
         ? (() => {
             const r = el.getBoundingClientRect();
@@ -127,14 +196,41 @@ async function measure(page: Page) {
       dock: rects[1],
       corner: rects[2],
       office: rects[3],
+      ground: rects[4],
+      // HOW SOLID THE GROUND REALLY IS, read off the browser rather than off
+      // the class list: bg-white/95 is a claim until something measures it.
+      groundBg: groundEl ? getComputedStyle(groundEl).backgroundColor : "(no element)",
+      // NOT ALWAYS rgba(), AND ASSUMING SO REPORTED A SOLID PANEL AS INVISIBLE.
+      // Tailwind v4 writes an opacity modifier as a color-mix, and Chrome
+      // resolves bg-white/95 to `oklab(0.999994 … / 0.95)`. The first version
+      // of this only understood `rgba(…)`, found no match, and answered 0 — a
+      // measurement failing on its own parser while the thing it measured was
+      // exactly right. Both modern `… / alpha` and legacy rgba are read.
+      groundAlpha: (() => {
+        if (!groundEl) return 0;
+        const bg = getComputedStyle(groundEl).backgroundColor;
+        if (bg === "transparent" || bg === "rgba(0, 0, 0, 0)") return 0;
+        const slash = /\/\s*([0-9.]+%?)\s*\)/.exec(bg);
+        if (slash) {
+          const v = slash[1];
+          return v.endsWith("%") ? Number(v.slice(0, -1)) / 100 : Number(v);
+        }
+        const rgba = /rgba?\(([^)]+)\)/.exec(bg);
+        if (rgba) {
+          const parts = rgba[1].split(/[,\s]+/).filter(Boolean).map(Number);
+          return parts.length >= 4 ? parts[3] : 1;
+        }
+        return 1;
+      })(),
       items,
       dockControls,
       art,
       paintedImages,
-      reserve: getComputedStyle(document.documentElement).getPropertyValue(varName).trim(),
+      reserve: getComputedStyle(document.documentElement).getPropertyValue(vars.reserve).trim(),
+      occupied: getComputedStyle(document.documentElement).getPropertyValue(vars.occupied).trim(),
       innerWidth: window.innerWidth,
     };
-  }, J4_DOCK_RESERVE_VAR);
+  }, { reserve: J4_DOCK_RESERVE_VAR, occupied: J4_DOCK_OCCUPIED_VAR });
 }
 
 async function main(): Promise<void> {
@@ -212,6 +308,44 @@ async function main(): Promise<void> {
         m.art ? `${m.art.w}x${m.art.h} inside ${expected}px` : "no character element");
       check(`${width}: J4's artwork is square`,
         !!(m.art && Math.abs(m.art.w - m.art.h) <= 1), m.art ? `${m.art.w}x${m.art.h}` : "-");
+
+      // ---- and his HEIGHT is held the same way his width is ---------------
+      //
+      // The width declaration keeps the rooms clear of him. This keeps the
+      // PAGE clear of him, and it is the half that was missing.
+      {
+        const tall = occupiedAt(width);
+        check(`${width}: the occupied height resolves to the documented ${tall}px`,
+          m.occupied === `${tall}px`, m.occupied);
+        // THE ANTI-DRIFT ASSERTION. The declaration is a mirror of J4's real
+        // box, and a mirror is only worth having if something checks it: make
+        // J4 taller without updating the value and the page silently stops
+        // clearing him again.
+        check(`${width}: and that IS his real box, not a number that used to be`,
+          m.dock?.h === tall, `dock h=${m.dock?.h}, declared ${tall}`);
+
+        // THE GROUND HE STANDS ON, covering exactly his box so no page content
+        // is ever seen sliding under a cut-out helmet.
+        check(`${width}: he stands on a ground, not over the page`,
+          !!m.ground, m.ground ? `${m.ground.w}x${m.ground.h}` : "no ground element");
+        check(`${width}: and the ground covers all of him`,
+          !!(m.ground && m.ground.w === m.dock?.w && m.ground.h === m.dock?.h),
+          `ground ${m.ground?.w}x${m.ground?.h} vs dock ${m.dock?.w}x${m.dock?.h}`);
+        // OPAQUE, or it is not a ground. A transparent panel would satisfy
+        // every geometric check above and hide nothing at all.
+        check(`${width}: the ground is opaque enough to hide what passes behind it`,
+          m.groundAlpha >= 0.9, `alpha ${m.groundAlpha} from ${m.groundBg}`);
+
+        // ---- THE REQUIREMENT ITSELF ---------------------------------------
+        const under = await contentUnderJ4(page);
+        check(`${width}: the page has a <main> and a dock to compare`, under.found,
+          under.offenders.join(", "));
+        check(`${width}: <main> reserves his full height`,
+          under.mainPadding === `${tall}px`, `padding-bottom ${under.mainPadding}, expected ${tall}px`);
+        check(`${width}: NOTHING an owner can scroll to sits underneath J4`,
+          under.offenders.length === 0,
+          `at the bottom of the page, ${under.offenders.length} element(s) overlap his box: ${under.offenders.join(" | ")}`);
+      }
       // ONE LAYER NOW, NOT TWO (2026-09-09).
       //
       // This asserted "both of J4's layers" because the character was a base

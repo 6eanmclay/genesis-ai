@@ -80,7 +80,18 @@ async function main() {
     const slug = `presentation-${Date.now()}`;
     const user = await prisma.user.create({ data: { email: `${slug}@example.test` } });
     const store = await prisma.store.create({
-      data: { userId: user.id, name: "Cubit & Coil", slug, tagline: "t", description: "d", currency: "USD" },
+      // PUBLISHED, BECAUSE A SHOPPER CANNOT SEE A SHOP THAT IS NOT (2026-09-17).
+      //
+      // This fixture has created an unpublished store since 2026-08-27 and got
+      // away with it until 2939770 — "A shop that was not open yet: the owner
+      // locked out, the stranger let in" — closed the hole on 2026-09-14. From
+      // then on every assertion below ran against "This store isn't available",
+      // which is the gate working exactly as intended.
+      //
+      // The fixture was the thing that was wrong: this suite is about what a
+      // customer sees in the bag and at checkout, and a customer can only be in
+      // the bag of a shop that is open.
+      data: { userId: user.id, name: "Cubit & Coil", slug, tagline: "t", description: "d", currency: "USD", published: true },
     });
     const product = await prisma.product.create({
       data: {

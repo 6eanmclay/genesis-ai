@@ -1062,7 +1062,19 @@ export function DashboardShell({
                 (decision 3): it renders on top of a room, so a ground that
                 varied with what is underneath would read as the room's. */}
             <main
-              className={`${roomSurface(pathname, basePath)} pb-28 md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
+              // CONTENT ENDS ABOVE J4, NOT BEHIND HIM (2026-09-17).
+              //
+              // This was `pb-28` — 112px, typed once and tracking nothing.
+              // J4's box is 141px at 390px and 129px at 360px, so the page
+              // stopped 29px and 17px short of clearing him and the last thing
+              // an owner scrolled to went behind his helmet. Seen in
+              // production on three separate screens.
+              //
+              // It pads by his measured height now, from the same one
+              // declaration the room bar takes its left padding from, so
+              // making J4 taller moves the content instead of re-opening the
+              // gap. See lib/dashboard/j4DockLayout.ts.
+              className={`${roomSurface(pathname, basePath)} pb-[var(--j4-dock-occupied)] md:pb-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pb-0 ${
                 // Home clears only the 64px header + 40px secondary nav; the
                 // other routes also clear MobileGenesisPresence's 76px bar.
                 isHome

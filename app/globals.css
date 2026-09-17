@@ -28,10 +28,26 @@
      Because the dock's width and the bar's padding are this same declaration,
      they cannot drift. Making J4 bigger is this number, and the rooms move. */
   --j4-dock-reserve: 104px;
+
+  /* HOW TALL HE IS, WHICH IS NOT THE SAME QUESTION (2026-09-17).
+     --j4-dock-reserve is his WIDTH, and it is what keeps the five rooms out
+     from under him. Nothing held his HEIGHT, and he is far taller than the
+     room bar: measured at 390px the bar is 56px and J4 occupies 141px, so he
+     stands 85px above it across 116px of width — over page content, at every
+     scroll position.
+     <main> cleared him with pb-28: 112px, written by hand, 29px short here and
+     17px short at 360px. That is what put "What's happening right now" and a
+     whole order row behind his helmet in production.
+     So his height is a declaration too, and <main> pads by THIS rather than by
+     a number somebody typed. Same contract as the reserve: one value, no
+     second copy, and verify-mobile-nav-layout asserts each one against the
+     dock's real measured box so a change nobody meant fails a suite rather
+     than a screenshot. */
+  --j4-dock-occupied: 129px;
 }
 
 @media (min-width: 390px) {
-  :root { --j4-dock-reserve: 116px; }
+  :root { --j4-dock-reserve: 116px; --j4-dock-occupied: 141px; }
 }
 
 /* Desktop keeps him exactly the size he already was.

@@ -320,6 +320,47 @@ async function main() {
       }
       assert("  and no branch can steal another branch's tap",
         overlaps.length === 0, overlaps.join(", "));
+
+      // ============ A BRANCH NAME THAT DOES NOT SURVIVE BEING DRAWN ====
+      //
+      // The map trims a label at 15 characters. DOMAIN_LABEL.traffic was
+      // "Traffic (your own site)" for a day, so the one branch the traffic
+      // milestone existed to expose was drawn as "Traffic (your…" — neither
+      // the word nor the distinction, and it reads as something broken.
+      //
+      // The trim is a safety net and stays. What is asserted is that no branch
+      // ever needs it, which makes an over-long name a failing check rather
+      // than an ellipsis nobody notices.
+      const truncated = await page.$$eval("[data-branch] text", (els) =>
+        els.map((el) => el.textContent ?? "").filter((t) => t.includes("…")));
+      assert("  no branch name is cut off",
+        truncated.length === 0, truncated.join(" | "));
+
+      // AND THE TARGET IS THE SIZE OF THE TEXT IT IS UNDER. The hit rectangle
+      // used to be estimated from the FULL label while the visible text was
+      // trimmed, so a long name claimed a target far wider than anything drawn
+      // — the two disagreeing about the same string.
+      const fit = await page.evaluate(() => {
+        const out: { key: string; label: number; hit: number }[] = [];
+        for (const g of document.querySelectorAll("[data-branch]")) {
+          const key = g.getAttribute("data-branch") ?? "";
+          const hit = g.querySelector("[data-branch-hit]")?.getBoundingClientRect();
+          const texts = [...g.querySelectorAll("text")].map((t) => t.getBoundingClientRect());
+          if (!hit || texts.length === 0) continue;
+          const label = Math.max(...texts.map((t) => t.width));
+          out.push({ key, label: Math.round(label), hit: Math.round(hit.width) });
+        }
+        return out;
+      });
+      assert("  every branch has text and a target to compare", fit.length > 0, `${fit.length}`);
+      // Generous on both sides: the rectangle also has to cover the DOT, and
+      // the estimate is character-based rather than a real text measurement.
+      // What this rules out is the shape of the old defect — a target sized for
+      // a string that is not on screen.
+      const mismatched = fit.filter((f) => f.hit > f.label * 3.2 || f.hit < f.label * 0.8);
+      assert("  and no target is sized for text that is not drawn",
+        mismatched.length === 0,
+        mismatched.map((m) => `${m.key} text=${m.label} hit=${m.hit}`).join(", "));
     }
 
     // ====================================================================

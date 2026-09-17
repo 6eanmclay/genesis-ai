@@ -51,6 +51,26 @@ import {
 // one world: you flew into a branch, you did not switch screens. The browser
 // suite still reads the world's real scale factor for that reason.
 
+/**
+ * HOW MUCH TEXT A BRANCH CAN CARRY BEFORE IT IS CUT.
+ *
+ * These were two magic numbers inline in the JSX, and the hit rectangle beside
+ * them sized itself from the full untruncated string — so what was drawn and
+ * what was targetable disagreed by however much had been trimmed. Named here,
+ * applied once per branch, read by both.
+ *
+ * A branch label reaching this limit is a design problem rather than a display
+ * one: "Traffic (your own site)" drew as "Traffic (your…", which says nothing.
+ * verify-business-map-browser asserts no branch is drawn truncated, so a label
+ * that does not fit fails a check instead of quietly becoming an ellipsis.
+ */
+const MAX_LABEL_CHARS = 15;
+const MAX_SUB_CHARS = 18;
+
+function ellipsise(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 interface Geometry {
   w: number; h: number; cx: number; cy: number;
   /** Radius of the ring of domains around the orb. */
@@ -387,6 +407,17 @@ export function BusinessMapCanvas({
                 const anchor = centred ? "middle" : right ? "start" : "end";
                 const dx = centred ? 0 : right ? G.gap : -G.gap;
                 const dy = centred ? (c.y > G.cy ? G.label * 1.9 : -G.label * 1.4) : 0;
+                // ============ ONE STRING, DRAWN AND TARGETED ============
+                //
+                // The text below used to truncate inline while the hit
+                // rectangle above sized itself from the UNTRUNCATED label, so
+                // the tap area and the visible words were two answers to the
+                // same question. "Traffic (your own site)" drew as "Traffic
+                // (your…" — 14 characters — and claimed a target wide enough
+                // for 23. The label is trimmed once, here, and everything that
+                // needs it reads the same variable.
+                const shownLabel = ellipsise(c.label, MAX_LABEL_CHARS);
+                const shownSub = ellipsise(c.sub, MAX_SUB_CHARS);
                 return (
                   <g key={c.key} className={open ? undefined : "hit"}
                     role={open ? undefined : "button"}
@@ -413,7 +444,7 @@ export function BusinessMapCanvas({
                         a few pixels inside it were.
                         The dot, the label and the count are now one target. */}
                     {!open && (() => {
-                      const chars = Math.max(c.label.length, c.sub.length);
+                      const chars = Math.max(shownLabel.length, shownSub.length);
                       const est = chars * G.label * 0.56;
                       const x0 = centred ? c.x - Math.max(G.hit, est / 2)
                         : right ? c.x - G.hit : c.x + dx - est;
@@ -438,11 +469,11 @@ export function BusinessMapCanvas({
                       <>
                         <text x={c.x + dx} y={c.y + dy - 1} textAnchor={anchor}
                           fill="var(--map-ink)" fontSize={G.label} fontWeight={600}>
-                          {c.label.length > 15 ? `${c.label.slice(0, 14)}…` : c.label}
+                          {shownLabel}
                         </text>
                         <text x={c.x + dx} y={c.y + dy + G.label * 1.05} textAnchor={anchor}
                           fill="var(--map-soft)" fontSize={G.sub}>
-                          {c.sub.length > 18 ? `${c.sub.slice(0, 17)}…` : c.sub}
+                          {shownSub}
                         </text>
                       </>
                     )}

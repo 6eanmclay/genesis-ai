@@ -84,6 +84,59 @@ export function reserveAt(viewportWidth: number): number {
   return value;
 }
 
+/** The custom property holding how TALL he is. Declared in app/globals.css. */
+export const J4_DOCK_OCCUPIED_VAR = "--j4-dock-occupied";
+
+/** Ready to drop into a style prop, like J4_DOCK_RESERVE above. */
+export const J4_DOCK_OCCUPIED = `var(${J4_DOCK_OCCUPIED_VAR})`;
+
+/**
+ * HOW MUCH VERTICAL ROOM J4 TAKES — the other half of the same contract.
+ *
+ * ============ WHAT THE WIDTH ALONE DID NOT SOLVE (2026-09-17) ==========
+ *
+ * The reserve above keeps the five ROOMS out from under J4, and it does that
+ * job. Nothing kept PAGE CONTENT out from under him, and he is much taller
+ * than the bar the rooms sit in: at 390px the bar is 56px and J4's box is
+ * 141px, so he stands 85px above it across 116px of width.
+ *
+ * `<main>` cleared him with `pb-28` — 112px, written by hand and tracking
+ * nothing. That is 29px short at 390px and 17px short at 360px, and it is why
+ * a production screenshot shows "What's happening right now" and an entire
+ * order row disappearing behind his helmet.
+ *
+ * Sean's instruction, 2026-09-17: "No scrollable page content may exist
+ * underneath J4... Content should terminate/scroll above the J4 occupied
+ * region, so the user can always see the last content rather than having it
+ * disappear behind the character. Do not shrink J4. Do not move him into the
+ * bar band."
+ *
+ * So his HEIGHT is declared the same way his width is, `<main>` pads by it,
+ * and the dock paints a ground continuous with the bar so the two read as one
+ * L-shaped surface rather than a sticker floating over the page.
+ *
+ * MEASURED, NOT PICKED. These are what the dock's own box really is, and
+ * verify-mobile-nav-layout asserts the declaration against that measurement at
+ * every width — so making J4 taller can never quietly re-open the gap.
+ *
+ * Mobile only, deliberately. `<main>` is `md:pb-0` and desktop lays the dock
+ * out beside a sidebar rather than under the content, which is a different
+ * problem nobody has reported. Growing this to desktop as a side effect of
+ * sharing a variable would be this change deciding something nobody asked for
+ * — the same reasoning the desktop reserve step records above.
+ */
+export const J4_DOCK_OCCUPIED_AT: ReadonlyArray<{ minWidth: number; occupied: number }> = [
+  { minWidth: 0, occupied: 129 },
+  { minWidth: 390, occupied: 141 },
+];
+
+/** How tall J4's box is at a given viewport width. */
+export function occupiedAt(viewportWidth: number): number {
+  let value = J4_DOCK_OCCUPIED_AT[0].occupied;
+  for (const step of J4_DOCK_OCCUPIED_AT) if (viewportWidth >= step.minWidth) value = step.occupied;
+  return value;
+}
+
 /** The smallest a room's tap target may be. Apple and Android both say 44. */
 export const MIN_TAP_TARGET_PX = 44;
 

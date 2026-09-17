@@ -113,6 +113,42 @@ export function J4Dock({
       // outgrow the space made for him. See lib/dashboard/j4DockLayout.ts.
       className="pointer-events-none fixed bottom-0 left-0 z-40 w-[var(--j4-dock-reserve)]"
     >
+      {/* ============ J4 STANDS ON GROUND, NOT OVER THE PAGE (2026-09-17) ==
+          Sean: "Give the entire J4 overhang a solid ground continuous with the
+          room/dock bar... No scrollable page content may exist underneath J4."
+
+          Two halves. <main> now pads by --j4-dock-occupied, so the END of a
+          page stops above him and the last thing an owner scrolls to is
+          readable. This is the other half: while a page is still scrolling,
+          content passes beneath him, and it should pass behind an opaque
+          surface the way it already does behind the room bar — rather than
+          sliding under a cut-out helmet and vanishing.
+
+          THE SAME SURFACE AS THE BAR, deliberately: identical background,
+          identical border colour, so the two are one L-shaped piece of chrome
+          rather than a panel parked next to a bar. J4Dock renders after the
+          nav at the same z-40, so this paints over the bar's own top border
+          where they meet and no rule crosses the alcove.
+
+          The top border is the step up out of the bar; the right border is the
+          edge where the alcove meets the page beside it. Without it an opaque
+          panel simply bleeds into the content to its right.
+
+          pointer-events-auto, alone in a pointer-events-none wrapper: this is
+          now something you can see, so a tap must land ON it rather than
+          passing through to whatever is scrolling past underneath. -z-10 keeps
+          it behind J4 himself and behind every control in the corner.
+
+          md:hidden because the room bar is. Desktop lays the dock out beside a
+          sidebar rather than under the content, which is a different problem
+          nobody has reported, and giving it a panel here would be this change
+          deciding something nobody asked for. */}
+      <div
+        aria-hidden="true"
+        data-testid="j4-dock-ground"
+        className="pointer-events-auto absolute inset-0 -z-10 border-r border-t border-black/[.08] bg-white/95 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden"
+      />
+
       {/* ---- EXPANDED: emerges from this corner, never the centre -------- */}
       {expanded && (
         <div

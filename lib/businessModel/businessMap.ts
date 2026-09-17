@@ -115,7 +115,20 @@ export const DOMAIN_LABEL: Record<MapDomainKey, string> = {
   // NAMED FOR WHERE IT COMES FROM. "Traffic" alone would sit next to "Social"
   // reading like another connected feed; this says whose telemetry it is, which
   // is the distinction Sean asked to be visible in the presentation itself.
-  traffic: "Traffic (your own site)",
+  //
+  // ============ AND IT HAS TO SURVIVE BEING DRAWN (2026-09-17) =========
+  //
+  // This read "Traffic (your own site)" for a day. The map truncates a branch
+  // label at 15 characters, so what an owner actually saw on the one branch
+  // this milestone existed to expose was "Traffic (your…" — which carries
+  // neither the word nor the distinction, and reads as something broken.
+  // The intent was right and the drawing defeated it.
+  //
+  // "Your traffic" is 12 and fits. The possessive is doing the same work the
+  // parenthetical was: beside "Social", which is someone else's platform, this
+  // one is the owner's own. Every branch label must fit, and the map suite
+  // asserts that none of them is drawn truncated.
+  traffic: "Your traffic",
   social: "Social",
   connections: "Connections",
   creation: "Creation",

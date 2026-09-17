@@ -298,16 +298,30 @@ async function main() {
     // Waited on the DATABASE, not on a spinner: the claim of this milestone is
     // that a correction is recorded, and a screen that merely re-rendered would
     // satisfy any DOM assertion.
-    await page.waitForTimeout(0);
-    let recorded: { status: string; retiredReason: string | null } | null = null;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      const row = await prisma.belief.findUniqueOrThrow({ where: { id: belief.id } });
-      if (row.status === "DISMISSED") {
-        recorded = { status: row.status, retiredReason: row.retiredReason };
-        break;
-      }
-      await page.waitForFunction(() => true, undefined, { timeout: 1_000 }).catch(() => {});
-    }
+    // ============ THE POLL THAT NEVER PAUSED (2026-09-17) ==============
+    //
+    // This was forty attempts separated by `waitForFunction(() => true)`, which
+    // is true on its first evaluation and therefore resolves at once. The
+    // forty attempts ran inside a few hundred milliseconds, all of them before
+    // the server action had committed, and then the loop gave up and reported
+    // that the correction never reached the database — while section 4 below,
+    // after a reload, found the very same correction and passed.
+    //
+    // A pause that does not pause is worse than no pause: it makes a race look
+    // like a settled verdict.
+    //
+    // Replaced with the product's own completion signal, and NOT with a sleep.
+    // The panel says "Nothing J4 currently believes" only once no active belief
+    // remains, so that is the event this waits for. The DATABASE is still what
+    // is asserted, which is this section's whole point — if the screen were to
+    // say it and the row disagreed, the check below would catch exactly that.
+    await page
+      .waitForFunction(() => document.body.innerText.includes("Nothing J4 currently believes"),
+        undefined, { timeout: 30_000 })
+      .catch(() => {});
+    const row = await prisma.belief.findUniqueOrThrow({ where: { id: belief.id } });
+    const recorded: { status: string; retiredReason: string | null } | null =
+      row.status === "DISMISSED" ? { status: row.status, retiredReason: row.retiredReason } : null;
     check("the correction reached the database", recorded?.status ?? "never", "DISMISSED");
     assert("in the owner's own words",
       (recorded?.retiredReason ?? "").includes("That was one bad month"), String(recorded?.retiredReason));
