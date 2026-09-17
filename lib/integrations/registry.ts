@@ -55,6 +55,28 @@ const CONNECTORS: Partial<Record<IntegrationProvider, IntegrationConnector>> = {
   XERO: xeroConnector,
 };
 
+/**
+ * Every registered connector, as [provider, connector] pairs.
+ *
+ * ============ SO A CONTRACT CAN BE SWEPT, NOT LISTED (2026-09-16) ======
+ *
+ * Gap 17 asks that `verify()` be proven to fail closed "for EVERY connector,
+ * not just EasyPost, which is checked individually today". A suite cannot do
+ * that against a hardcoded list of names — the connector nobody adds to the
+ * list is exactly the one that ships an open verifier, which is the same
+ * mirrored-registry failure that let Mailchimp's missing configured() sit
+ * behind an assertion written to catch it.
+ *
+ * This map is already the one place a connector is registered, so exposing it
+ * is what makes the sweep derive its own subjects. It returns pairs rather
+ * than the map itself so no caller can mutate the registry.
+ */
+export function allConnectors(): [IntegrationProvider, IntegrationConnector][] {
+  return Object.entries(CONNECTORS).filter(
+    (entry): entry is [IntegrationProvider, IntegrationConnector] => entry[1] !== undefined,
+  );
+}
+
 export function getConnector(provider: IntegrationProvider): IntegrationConnector {
   const connector = CONNECTORS[provider];
   if (!connector) {
