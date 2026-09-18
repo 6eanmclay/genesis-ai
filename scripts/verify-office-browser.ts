@@ -735,22 +735,61 @@ async function main() {
       // OfficeBand at all: `showsOfficeBand = !talkingOnly && !isLayer`. A
       // strip assertion here reads an empty node list and proves nothing about
       // the strip — which is exactly what the first version of it did.
-      assert("this surface is the layer, which has no strip to read",
-        (await page.evaluate(() =>
-          document.querySelector("[data-j4-presentation='office']")
-            ?.querySelectorAll('[data-testid="office-facts"]').length ?? -1)) === 0,
-        "the rendered-strip assertions live in verify-office-arrival, on the room");
+      // ============ ALSO REVERSED (2026-09-17) =========================
+      //
+      // This read "this surface is the layer, which has no strip to read",
+      // which was true only while the layer was excluded from the Office band.
+      // Now that the layer IS the Office, the grounding below the work belongs
+      // here as well — and the loop above leaves a non-Conversation view open,
+      // which is exactly where the component renders it.
+      //
+      // The omission on Conversation is a real decision and is asserted as
+      // one: "the conversation's scroller is a message log that opens scrolled
+      // to its end, so this block would land between the last thing J4 said
+      // and the composer". Both halves, so neither can drift into the other.
+      const factsOn = async () => await page.evaluate(() =>
+        document.querySelector("[data-j4-presentation='office']")
+          ?.querySelectorAll('[data-testid="office-facts"]').length ?? -1);
+      assert("the work on the layer is grounded, as it is in the room",
+        (await factsOn()) === 1, `${await factsOn()} facts strips while a queue view is open`);
+      await showView(page, "Conversation");
+      assert("  and never inside the conversation itself",
+        (await factsOn()) === 0,
+        "it would land between the last thing J4 said and the composer");
+      await showView(page, TAB_LABEL.information);
       // AND NO PRESENCE ROW EITHER (2026-09-13). The room's band split into a
       // pinned presence row and a grounding block below the work; both are
       // gated on the same `!isLayer` the whole band was. Asserted so the split
       // cannot quietly give the layer an arrival experience it was never
       // designed to have — that is a separate scope Sean has explicitly
       // reserved, not something a mobile layout fix may decide.
-      assert("  and the layer grew no presence row from the split",
+      // ============ REVERSED ON PURPOSE (2026-09-17, Sean) =============
+      //
+      // This asserted the layer had NO presence row, and said why: "so the
+      // split cannot quietly give the layer an arrival experience it was never
+      // designed to have — that is a separate scope Sean has explicitly
+      // reserved, not something a mobile layout fix may decide."
+      //
+      // The reservation was right and it has now been decided. The layer is
+      // the full-screen Office, not a panel over the workspace, and excluding
+      // it meant the phone kept rendering the strip the 2026-09-09 rebuild
+      // replaced — the one OfficeBand.tsx calls "a filter bar over a table".
+      // Sean, with the production screenshot: "give the mobile Office layer
+      // the same visual ground/band language as the Office room so it reads as
+      // one continuous Office experience."
+      //
+      // So the assertion is not deleted, it is turned around. The obsolete
+      // presentation cannot come back silently either: both halves are checked
+      // below, because "the band is present" and "the old strip is gone" are
+      // two different failures and only one of them is loud.
+      assert("  the layer is the Office, so J4 is present in it",
         (await page.evaluate(() =>
           document.querySelector("[data-j4-presentation='office']")
-            ?.querySelectorAll('[data-testid="office-presence"]').length ?? -1)) === 0,
-        "the band is a separate question from the briefing, and is unchanged");
+            ?.querySelectorAll('[data-testid="office-presence"]').length ?? -1)) === 1,
+        "the phone opens this surface; the room's band belongs here too");
+      assert("  and the strip it replaced is gone",
+        !(await officeText(page)).includes("Business Partner for"),
+        "the old identity strip must not return alongside the band, or beside it");
 
       // THAT QUESTION IS NOW ANSWERED (2026-09-13). The line above used to end
       // "whether the layer should have a briefing at all is its own question".

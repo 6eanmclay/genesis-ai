@@ -1003,7 +1003,38 @@ export function J4Workspace({
   // THE OFFICE BAND IS THE IDENTITY when it is on screen. One flag, read by
   // the band itself and by the two header pieces it replaces, so they cannot
   // disagree about whether J4 has already been introduced on this surface.
-  const showsOfficeBand = !talkingOnly && !isLayer;
+  //
+  // ============ THE LAYER IS THE OFFICE TOO (2026-09-17, Sean) ==========
+  //
+  // This read `&& !isLayer`, on the reasoning that "the layer is a panel over
+  // the owner's work and must not grow a second identity band above the one it
+  // already has". That was true when it was a panel. It stopped being true
+  // when the layer became the full-screen Office entered on purpose — this
+  // file says so a few hundred lines down: "The layer IS the Office now —
+  // full screen, entered on purpose."
+  //
+  // The two sentences were both in this component, and the phone believed the
+  // older one. So the 2026-09-09 rebuild — J4 present at the top, the arc the
+  // work moves through, what he is currently holding, the quick actions —
+  // reached the room and not the surface a phone actually opens, which kept
+  // rendering the strip OfficeBand.tsx itself describes as what it replaced:
+  // "a small identity strip reading 'J4 / Business Partner for Cubit & Coil'
+  // above a list of rows... it read as a filter bar over a table."
+  //
+  // Sean, from the production screenshot: "the current mobile path is
+  // excluding the Office layer and exposing the old OfficeBand strip."
+  //
+  // NOTHING ELSE MOVES. The band replaces the strip rather than joining it —
+  // that is what this one flag has always guaranteed, and it is why this is
+  // one line. The Office still opens on Conversation; OfficeGrounding is still
+  // omitted there, so the opening state is still a conversation with J4
+  // present, not a dashboard. Progressive loading is untouched: the presence
+  // row needs only the store name and his state, and the grounding block
+  // renders only when the category is not Conversation, which is exactly when
+  // `needsIntelligence` turns on.
+  //
+  // Talk Mode keeps no band, which is what `!talkingOnly` has always said.
+  const showsOfficeBand = !talkingOnly;
   const overallState = deriveAssessmentState({ hasUrgentIssue, hasPendingDecision, hasOpportunity, hasCuriosity });
   // WHAT J4 IS DOING, as opposed to what he has concluded. overallState above
   // is an ASSESSMENT - urgent, pending, opportunity - and putting that on his
