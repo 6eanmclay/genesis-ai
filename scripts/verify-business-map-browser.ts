@@ -617,12 +617,33 @@ async function main() {
     // drawing of him. So that is what is still asserted, from the other side:
     // the centre must be the canonical J4Character, the same component the
     // dock and the Office band render. One J4, at the middle of his own map.
-    assert("the centre is J4 himself, in the canonical artwork",
-      (await orb.locator("[data-j4-state]").count()) === 1,
-      "the map's centre must be the same J4Character the dock renders");
-    assert("  and not a second, different drawing of him",
+    // ============ AND NOW THE REAR VIEW (2026-09-18, Sean) ===========
+    //
+    // Third and last turn of this line, and the history is still the point.
+    // 2026-09-02 the centre was J4; 2026-09-04 it was the business, not J4;
+    // 2026-09-17 it was J4 again, in the shared front-view artwork. Sean has
+    // now supplied a rear-view render and scoped it precisely: "Use that
+    // rear-view J4 as the center visual for Business Map only. Do not replace
+    // the shared J4Character artwork, because the front-view J4 is still
+    // required everywhere else."
+    //
+    // So what is asserted is the scope, in both directions. The map shows its
+    // OWN asset, and the shared one must not appear here — because the failure
+    // mode that costs something is not the map losing its render, it is the
+    // map quietly going back to the shared one and taking the dock with it the
+    // next time somebody "simplifies" the two into a single component.
+    assert("the centre is the rear-view J4, the map's own render",
+      (await orb.locator("[data-map-centre-j4]").count()) === 1,
+      "the map centre must be MapCentreJ4, which owns the rear-view asset");
+    assert("  drawn from the map's own asset and no other",
+      (await orb.locator('img[src*="j4-rear-map"]').count()) === 1,
+      String(await orb.innerHTML().catch(() => "")).slice(0, 160));
+    assert("  and the shared front-view artwork is not used here",
+      (await orb.locator('img[src*="j4-v2"]').count()) === 0,
+      "the dock's render belongs to the dock; one asset per surface");
+    assert("  nor a second, different drawing of him",
       (await orb.locator('img[alt="Genesis"]').count()) === 0,
-      "one J4 identity: the orb avatar is not a second J4 beside the character");
+      "one J4 identity: the orb avatar is not a second J4 beside the render");
     assert("and it says nothing at all at the top level",
       ((await orb.textContent()) ?? "").trim() === "",
       ((await orb.textContent()) ?? "").trim());

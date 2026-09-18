@@ -6,7 +6,7 @@ import { entitiesFor, type MapProspect } from "@/lib/businessModel/mapEntities";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GenesisAvatar } from "./GenesisAvatar";
 import { J4Icon, type J4IconName } from "./J4Icon";
-import { J4Character } from "@/components/j4/J4Character";
+import { MapCentreJ4 } from "./MapCentreJ4";
 import { useJ4State } from "@/components/j4/useJ4State";
 import { MapDataStream } from "./MapDataStream";
 import { ConnectionChooser } from "./ConnectionChooser";
@@ -888,25 +888,37 @@ export function BusinessMapCanvas({
                   "radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--map-known) 30%, transparent) 0%, color-mix(in oklab, var(--map-known) 12%, transparent) 38%, transparent 68%)",
               }}
             />
-            <span
-              className="relative block rounded-full"
-              style={{
-                boxShadow:
-                  "0 0 0 1px color-mix(in oklab, var(--map-known) 45%, transparent), 0 0 34px 10px color-mix(in oklab, var(--map-known) 22%, transparent)",
-              }}
-            >
-              <span className="block overflow-hidden rounded-full">
-                <J4Character
-                  state={centreState}
-                  /* SIZED TO THE RIM THE EDGES STOP AT, per breakpoint, so the
-                     connections meet him instead of vanishing underneath.
-                     `narrow` is the same flag the geometry itself switches on,
-                     so the two cannot disagree about which map is on screen. */
-                  size={open ? 28 : narrow ? 78 : 98}
-                  title={`J4 — ${centreState}`}
-                />
-              </span>
-            </span>
+            {/* ============ THE REAR VIEW, MAP ONLY (2026-09-18) =======
+                Sean supplied the render and the instruction: "Use that
+                rear-view J4 as the center visual for Business Map only. Do not
+                replace the shared J4Character artwork, because the front-view
+                J4 is still required everywhere else."
+
+                So this is MapCentreJ4, which owns the map's asset and nothing
+                else does. J4Character keeps its single render and the dock, the
+                Office and the composer are untouched — see MapCentreJ4.tsx for
+                why this could not be a prop on that component without
+                weakening a real invariant.
+
+                THE ROUND APERTURE IS GONE, and that is the asset's doing
+                rather than a redesign: the render is a portrait of a head,
+                shoulders and the emblem on his back, and a circle cut through
+                the middle of it. The feathering moved onto the render itself,
+                so he still ends in the environment rather than on a seam.
+
+                Everything around him is frozen: the streams, the parcels, the
+                indicators, the counts, the provenance and every branch target
+                are exactly as they were in 0e91bc6. */}
+            <MapCentreJ4
+              state={centreState}
+              /* Sized so he is the intelligence at the centre rather than a
+                 token in it, and stopped short of the innermost stream
+                 indicator so nothing he sits over is something the map is
+                 trying to say. Streams pass BEHIND him, which is the
+                 reference's own arrangement. */
+              width={open ? 34 : narrow ? 104 : 132}
+              title={`J4 — ${centreState}`}
+            />
             {/* The branch reads as flowing OUT of J4, which is the direction
                 Sean drew: orb, then down, then the things. */}
             {open && domain && (
