@@ -95,12 +95,14 @@ const MAX_SUB_CHARS = 18;
  * than approximated from something close — see J4Icon.tsx.
  */
 const DOMAIN_ICON: Record<MapDomainKey, J4IconName> = {
-  business: "business",
-  commerce: "orders",
+  // ---- the five Sean's reference draws as a different object -----------
+  business: "briefcase",  // an enterprise, not premises
+  commerce: "cart",       // the act of buying, not a parcel
+  financials: "coins",    // money itself, not a card
+  goals: "target",        // aimed at, arrow included
+  traffic: "trend",       // arrivals rising, not a static bar chart
+  // ---- and the five that already drew the reference's object -----------
   customers: "customers",
-  financials: "payments",
-  goals: "goal",
-  traffic: "analytics",
   social: "share",
   connections: "connections",
   creation: "idea",
@@ -189,7 +191,7 @@ interface Geometry {
 
 const WIDE: Geometry = {
   w: 900, h: 476, cx: 450, cy: 238,
-  ring: 262, ringSquash: 0.74,
+  ring: 292, ringSquash: 0.72,
   hub: 78, dot: 9, node: 17, icon: 18, packet: 3.2, badge: 9,
   label: 16, sub: 12.5, gap: 22, hit: 30,
 };
@@ -197,8 +199,8 @@ const WIDE: Geometry = {
 // Not a shrunken copy: a tighter ring with LARGER type, its radius set by the
 // longest label so "Connections" cannot clip to "onnections".
 const NARROW: Geometry = {
-  w: 460, h: 384, cx: 230, cy: 192,
-  ring: 120, ringSquash: 0.98,
+  w: 492, h: 392, cx: 246, cy: 196,
+  ring: 134, ringSquash: 0.95,
   hub: 54, dot: 7, node: 13, icon: 14, packet: 2.6, badge: 7.5,
   label: 15, sub: 11.5, gap: 16, hit: 22,
 };

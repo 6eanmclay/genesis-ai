@@ -632,11 +632,11 @@ async function main() {
     // mode that costs something is not the map losing its render, it is the
     // map quietly going back to the shared one and taking the dock with it the
     // next time somebody "simplifies" the two into a single component.
-    assert("the centre is the rear-view J4, the map's own render",
+    assert("the centre is the brain, the map's own render",
       (await orb.locator("[data-map-centre-j4]").count()) === 1,
       "the map centre must be MapCentreJ4, which owns the rear-view asset");
     assert("  drawn from the map's own asset and no other",
-      (await orb.locator('img[src*="j4-rear-map"]').count()) === 1,
+      (await orb.locator('img[src*="j4-brain-map"]').count()) === 1,
       String(await orb.innerHTML().catch(() => "")).slice(0, 160));
     assert("  and the shared front-view artwork is not used here",
       (await orb.locator('img[src*="j4-v2"]').count()) === 0,

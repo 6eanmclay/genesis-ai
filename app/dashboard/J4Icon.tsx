@@ -44,7 +44,13 @@ export type J4IconName =
   | "idea"
   | "learning"
   | "share"
-  | "goal";
+  | "goal"
+  // The Business Map's own five (2026-09-18); see PATHS below.
+  | "briefcase"
+  | "cart"
+  | "coins"
+  | "target"
+  | "trend";
 
 // Paths only — every shared attribute (stroke, width, caps, joins) lives on
 // the <svg> below so a single icon can never drift from the system.
@@ -210,6 +216,63 @@ const PATHS: Record<J4IconName, React.ReactNode> = {
       <path d="m8.2 10.8 7.6-3.9M8.2 13.2l7.6 3.9" />
     </>
   ),
+  // ============ THE MAP'S OWN FIVE (2026-09-18) =======================
+  //
+  // Sean picked the icon language from his reference for the Business Map's
+  // branches. Five of the ten depicted a DIFFERENT OBJECT from the reference,
+  // and those five are here.
+  //
+  // ADDED RATHER THAN REDEFINED, which is the whole point. `business`,
+  // `orders`, `payments` and `analytics` are read by NAV_ICONS in
+  // DashboardShell — the room bar wears them. Editing those paths to match the
+  // reference would have silently changed the navigation of every room while
+  // the request was about one screen's branches.
+  //
+  // The other five domains already depicted the reference's object — a
+  // graduation cap, a bulb, a link, share nodes, a group of people — and are
+  // untouched for the same reason a change nobody asked for is still a change.
+
+  /** Business — the business as an enterprise: a briefcase, not premises. */
+  briefcase: (
+    <>
+      <path d="M3 8.5h18v11H3z" />
+      <path d="M9 8.5V6.2a1.2 1.2 0 0 1 1.2-1.2h3.6A1.2 1.2 0 0 1 15 6.2v2.3" />
+      <path d="M3 13.2h18" />
+    </>
+  ),
+  /** Commerce — a trolley, which is the act of buying rather than a parcel. */
+  cart: (
+    <>
+      <path d="M2.5 4h2.2l2.3 10.2h9.6l2.1-7.4H6.2" />
+      <circle cx="9.5" cy="18.5" r="1.4" />
+      <circle cx="16.5" cy="18.5" r="1.4" />
+    </>
+  ),
+  /** Financials — money itself, stacked, rather than a card. */
+  coins: (
+    <>
+      <ellipse cx="12" cy="6.6" rx="7" ry="2.8" />
+      <path d="M5 6.6v4.2c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6.6" />
+      <path d="M5 10.8V15c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-4.2" />
+    </>
+  ),
+  /** Goals — a target that is being aimed AT, arrow included. */
+  target: (
+    <>
+      <circle cx="11" cy="13" r="7.5" />
+      <circle cx="11" cy="13" r="3.4" />
+      <path d="m13.6 10.4 5.2-5.2M16.4 4.4h2.8v2.8" />
+    </>
+  ),
+  /** Your traffic — arrivals rising, not a static bar chart. */
+  trend: (
+    <>
+      <path d="M3 20h18" />
+      <path d="M6 20v-4.5M10.5 20v-8M15 20v-5.5M19.5 20v-10" />
+      <path d="m4.5 9 5-4.2 4 2.6 6-4.4" />
+    </>
+  ),
+
   /** Goals — something aimed at, which is not the same as a task. */
   goal: (
     <>
