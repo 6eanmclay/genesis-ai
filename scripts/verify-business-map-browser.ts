@@ -506,16 +506,80 @@ async function main() {
         flowing.length > 0 && flowing.length < drawnBranches.length,
         `${flowing.length} of ${drawnBranches.length} — this fixture must have both kinds for the check to mean anything`);
 
-      // AND IT TRAVELS. A dash pattern with no animation is a dotted line.
-      const animated = await page.$eval("[data-flow]", (el) => {
-        const s = getComputedStyle(el);
-        return { name: s.animationName, dur: s.animationDuration, dash: s.strokeDasharray };
-      });
-      assert("  the connection is genuinely moving, not a dotted line",
-        animated.name === "map-flow" && parseFloat(animated.dur) > 0,
-        `${animated.name} ${animated.dur}`);
-      assert("  carrying a travelling mark rather than a solid stroke",
-        /\d/.test(animated.dash) && animated.dash !== "none", animated.dash);
+      // ============ PARCELS, NOT A DOTTED LINE (2026-09-18) ==========
+      //
+      // These two used to assert the dash mechanism — animationName map-flow
+      // and a stroke-dasharray. Both described HOW it moved rather than that
+      // it moved, and the how has changed: separate marks travelling a path,
+      // because a dash pattern moves every dash in lockstep and reads as one
+      // dotted line sliding. Sean asked for packets; the assertions follow the
+      // behaviour rather than the old technique.
+      const packets = await page.$$eval("[data-packet]", (els) =>
+        els.map((el) => {
+          const cs = getComputedStyle(el);
+          return {
+            key: el.getAttribute("data-packet") ?? "",
+            name: cs.animationName,
+            dur: parseFloat(cs.animationDuration),
+            delay: cs.animationDelay,
+            path: cs.offsetPath,
+          };
+        }));
+
+      assert("  each stream carries travelling packets",
+        packets.length > 0 && packets.every((x) => x.name === "map-packet" && x.dur > 0),
+        `${packets.length} packets, first ${packets[0]?.name} ${packets[0]?.dur}`);
+      // MORE THAN ONE STREAM'S WORTH, and they do not all start together —
+      // simultaneous marks at even spacing is the dotted line this replaced.
+      assert("  which arrive one after another rather than in lockstep",
+        new Set(packets.map((x) => x.delay)).size > 1,
+        packets.map((x) => x.delay).join(", "));
+      // AND EACH RIDES ITS OWN CONNECTION. A packet with no path would sit at
+      // the origin of the stage, which is a corner, not a stream.
+      assert("  along the connection itself, not loose on the stage",
+        packets.every((x) => x.path && x.path !== "none" && x.path.includes("path")),
+        packets[0]?.path ?? "(none)");
+      assert("  and only on the branches that have something to send",
+        new Set(packets.map((x) => x.key)).size === withData,
+        `${new Set(packets.map((x) => x.key)).size} streams carrying, ${withData} with data`);
+
+      // ============ AN INDICATOR IS NEVER A CLAIM (2026-09-18) =======
+      //
+      // Sean: "These are not new data claims and must not be invented. They
+      // are visual representations of data J4 actually has."
+      //
+      // The indicators ride the streams and are the easiest thing on this
+      // screen to fake — three little glyphs look like three little things
+      // whether or not three things exist. So the count is held against the
+      // branch's own count, which comes from the same rows the map is built
+      // from. Fewer is fine: a stream is not an inventory, and the number
+      // beside the branch is what states the total. More is a lie.
+      const branchCounts = await page.$$eval("[data-branch]", (els) =>
+        els.map((el) => {
+          const key = el.getAttribute("data-branch") ?? "";
+          // The count drawn under the label — "14", or "not known yet".
+          const sub = el.querySelectorAll("text")[1]?.textContent?.trim() ?? "";
+          return { key, sub };
+        }));
+      const indicators = await page.$$eval("[data-stream-indicator]", (els) =>
+        els.map((el) => el.getAttribute("data-stream-indicator") ?? ""));
+
+      const overclaimed: string[] = [];
+      for (const b of branchCounts) {
+        const shown = indicators.filter((k) => k === b.key).length;
+        const real = /^\d+$/.test(b.sub) ? Number(b.sub) : 0;
+        if (shown > real) overclaimed.push(`${b.key}: ${shown} indicators, ${real} things`);
+      }
+      assert("  no stream shows more indicators than it has data",
+        overclaimed.length === 0, overclaimed.join(" | "));
+      assert("  and the streams carry indicators at all",
+        indicators.length > 0, `${indicators.length}`);
+      // AND NEVER ON AN EMPTY BRANCH. A branch J4 knows nothing about has
+      // nothing to depict, so it depicts nothing.
+      const emptyKeys = branchCounts.filter((b) => !/^\d+$/.test(b.sub)).map((b) => b.key);
+      assert("  and none at all on a branch with nothing behind it",
+        emptyKeys.every((k) => !indicators.includes(k)),
+        emptyKeys.filter((k) => indicators.includes(k)).join(", "));
     }
 
     // ====================================================================
@@ -1123,6 +1187,27 @@ async function main() {
       assert("and the network field holds still", a === (await frame()),
         "the canvas redrew itself between frames");
       assert("while still drawing something", a.length > 5000, `${a.length} bytes`);
+
+      // ============ AND THE STREAMS STOP, WITHOUT VANISHING ==========
+      //
+      // Left open when the packets shipped: section 9 proved the MAP behaves
+      // with motion reduced, and nothing proved it of the travelling packets
+      // themselves. Both halves matter. Removing the animation is the easy
+      // half; the honest half is that a still map still shows each stream
+      // carrying something, rather than going blank and quietly dropping the
+      // claim it makes when it moves.
+      const stillPackets = await p2.$$eval("[data-packet]", (els) =>
+        els.map((el) => {
+          const cs = getComputedStyle(el);
+          const r = el.getBoundingClientRect();
+          return { anim: cs.animationName, dist: cs.offsetDistance, w: Math.round(r.width) };
+        }));
+      assert("the packets hold still when motion is reduced",
+        stillPackets.length > 0 && stillPackets.every((x) => x.anim === "none"),
+        stillPackets.map((x) => x.anim).join(", "));
+      assert("  and are still on screen, so the stream still says it carries something",
+        stillPackets.every((x) => x.w > 0 && x.dist !== "0%"),
+        stillPackets.map((x) => `${x.w}px@${x.dist}`).join(", "));
 
       await p2.screenshot({ path: `${SHOTS}/business-map-reduced-motion.png`, fullPage: false });
       await still.close();

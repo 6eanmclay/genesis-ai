@@ -113,6 +113,57 @@ const MAP_KEY: ReadonlyArray<{ state: Certainty; label: string }> = [
   { state: "unknown", label: "not known yet" },
 ];
 
+/**
+ * WHAT A STREAM IS CARRYING, AND ONLY WHAT IT REALLY CARRIES (2026-09-18).
+ *
+ * Sean: "Layer small, glowing contextual indicators directly onto/along those
+ * paths... These are not new data claims and must not be invented. They are
+ * visual representations of data J4 actually has."
+ *
+ * So there are exactly two sources, both already on screen elsewhere:
+ *
+ *   A CONNECTED PROVIDER, drawn as its own favicon — the same
+ *   `https://<iconDomain>/favicon.ico` the connection chooser already shows,
+ *   and only for a service this store has genuinely connected. That is what
+ *   puts X, Instagram or YouTube on the Social stream when, and only when,
+ *   those accounts are connected.
+ *
+ *   OTHERWISE A REAL ROW, drawn as the domain's own glyph — one per thing J4
+ *   actually holds in that domain, never more.
+ *
+ * The cap is three because a stream is a stream, not an inventory; the count
+ * beside the branch is what states the total. An indicator can therefore never
+ * out-number the data, which is the assertion this exists to be held to.
+ */
+const MAX_INDICATORS = 3;
+
+interface StreamIndicator {
+  /** A provider's own favicon, or null to draw the domain's glyph instead. */
+  src: string | null;
+  /** What it stands for, for the assertion and for nothing visual. */
+  of: string;
+}
+
+function indicatorsFor(
+  key: MapDomainKey,
+  services: MapService[],
+  nodeCount: number,
+): StreamIndicator[] {
+  const connected = services.filter(
+    (s) => s.domain === key && s.connected && s.iconDomain,
+  );
+  if (connected.length > 0) {
+    return connected.slice(0, MAX_INDICATORS).map((s) => ({
+      src: `https://${s.iconDomain}/favicon.ico`,
+      of: s.name,
+    }));
+  }
+  return Array.from({ length: Math.min(MAX_INDICATORS, nodeCount) }, () => ({
+    src: null,
+    of: key,
+  }));
+}
+
 function ellipsise(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
@@ -128,22 +179,28 @@ interface Geometry {
   node: number;
   /** The glyph inside that ring. */
   icon: number;
+  /** A travelling parcel of information. */
+  packet: number;
+  /** A contextual indicator riding the stream. */
+  badge: number;
   label: number; sub: number; gap: number;
   hit: number;
 }
 
 const WIDE: Geometry = {
-  w: 900, h: 560, cx: 450, cy: 280,
-  ring: 258, ringSquash: 0.66,
-  hub: 78, dot: 9, node: 17, icon: 18, label: 16, sub: 12.5, gap: 22, hit: 30,
+  w: 900, h: 476, cx: 450, cy: 238,
+  ring: 262, ringSquash: 0.74,
+  hub: 78, dot: 9, node: 17, icon: 18, packet: 3.2, badge: 9,
+  label: 16, sub: 12.5, gap: 22, hit: 30,
 };
 
 // Not a shrunken copy: a tighter ring with LARGER type, its radius set by the
 // longest label so "Connections" cannot clip to "onnections".
 const NARROW: Geometry = {
-  w: 460, h: 430, cx: 230, cy: 215,
-  ring: 118, ringSquash: 0.92,
-  hub: 54, dot: 7, node: 13, icon: 14, label: 15, sub: 11.5, gap: 16, hit: 22,
+  w: 460, h: 384, cx: 230, cy: 192,
+  ring: 120, ringSquash: 0.98,
+  hub: 54, dot: 7, node: 13, icon: 14, packet: 2.6, badge: 7.5,
+  label: 15, sub: 11.5, gap: 16, hit: 22,
 };
 
 export interface MapService {
@@ -340,53 +397,91 @@ export function BusinessMapCanvas({
       className="business-map"
     >
       <style>{`
+        /* ============ THE MAP IS AN ENVIRONMENT, NOT A SHEET ==========
+           Sean, with a reference composition (2026-09-18): "The background
+           should feel immersive, and the branches/streams/icons should sit on
+           top of the environment, almost like a holographic HUD... not like a
+           normal dashboard card with lines drawn on top."
+
+           So the stage carries its own dark ground at every page theme rather
+           than following it. The map has always been the single bounded object
+           on a boxless room; it is now a bounded WINDOW INTO something rather
+           than a panel with a diagram printed on it.
+
+           THE THREE PROVENANCE COLOURS ARE THE ONES THAT ALREADY EXISTED.
+           These are verbatim the values this file already shipped for dark
+           mode - nothing new is invented, and the three states keep their hues
+           and their meanings. They simply apply always now, because the ground
+           is always dark. Keeping the light values would have put a #1f6b4c
+           dot on near-black and cost the very distinction the map exists to
+           make. */
         .business-map {
-          --map-known: #1f6b4c;
-          --map-inferred: #1b5fc4;
-          --map-unknown: #8c959b;
-          --map-ink: #12181c;
-          --map-soft: #5b666d;
-          --map-surface: #ffffff;
-          --map-ground: #f7f9f9;
-          --map-stream: #1b5fc4;
+          --map-known: #5fb98f;
+          --map-inferred: #7fadf5;
+          --map-unknown: #78838a;
+          --map-ink: #e6ebed;
+          --map-soft: #a5b0b6;
+          --map-surface: #0b1013;
+          --map-ground: #070b0e;
+          --map-stream: #7fadf5;
         }
 
-        /* ============ INFORMATION ARRIVING (2026-09-17) ================
-           One short dash per connection, travelling from the branch to J4.
-           stroke-dashoffset counts UP, which walks the pattern backwards
-           along a line drawn centre-to-branch — so the movement is inward,
-           which is the direction the picture is claiming.
+        /* ============ INFORMATION ARRIVING (2026-09-18) ===============
+           This was one dash travelling per line, drawn with stroke-dashoffset.
+           It was honest and it read as a dotted line sliding, because that is
+           what it was: every dash on a stroke moves in lockstep at even
+           spacing. Sean: "They should look like data packets flowing from each
+           domain into J4."
 
-           The dash pattern is deliberately sparse (1 on, 13 off): a single
-           travelling point per line reads as a parcel of information rather
-           than as a barber's pole, and ten of them at once stay calm.
+           So the marks are now separate elements on the same path, each
+           starting at its own moment. offset-path hands the motion to the
+           browser: nothing is timed in a render, nothing drifts out of step
+           with React, and reduced motion can stop it in one rule.
 
-           NOTHING IS TIMED IN JAVASCRIPT. This is the same technique the
-           Genesis avatar's own ribbons use, which is why it costs nothing and
-           cannot drift out of step with a render. */
-        @keyframes map-flow { to { stroke-dashoffset: 14; } }
-        .business-map .map-flow {
-          stroke-dashoffset: 0;
-          animation: map-flow 1.5s linear infinite;
+           The stream runs branch -> centre, so 0%..100% IS the direction the
+           information travels. Fading in and out at the ends keeps a packet
+           from popping into existence on top of the node it left. */
+        @keyframes map-packet {
+          0%   { offset-distance: 0%;   opacity: 0; }
+          12%  { opacity: 1; }
+          82%  { opacity: 1; }
+          100% { offset-distance: 100%; opacity: 0; }
         }
-        /* Motion is the only thing removed. The travelling dash becomes a
-           static one, so the connection still reads as carrying something and
-           nobody is made to watch it move. */
+        .business-map .map-packet {
+          offset-rotate: 0deg;
+          animation: map-packet 2.7s linear infinite;
+        }
+        /* The streams glow because this is an environment, not a diagram. Kept
+           on the stream and its packets only, so labels and counts stay crisp
+           type rather than neon. */
+        .business-map .map-stream-line,
+        .business-map .map-packet {
+          filter: drop-shadow(0 0 3px currentColor);
+        }
+        .business-map .map-stream-line { color: var(--map-known); }
+
+        /* MOTION IS THE ONLY THING REMOVED. The packets stop where they are
+           rather than disappearing, so a still map still shows each stream
+           carrying something. Nothing is hidden to satisfy the preference. */
         @media (prefers-reduced-motion: reduce) {
-          .business-map .map-flow { animation: none; }
+          .business-map .map-packet { animation: none; offset-distance: 62%; }
         }
-        @media (prefers-color-scheme: dark) {
-          .business-map {
-            --map-known: #5fb98f;
-            --map-inferred: #7fadf5;
-            --map-unknown: #78838a;
-            --map-ink: #e6ebed;
-            --map-soft: #a5b0b6;
-            --map-surface: #0b1013;
-            --map-ground: #0a0e11;
-            --map-stream: #7fadf5;
-          }
+
+        /* ============ THE INTELLIGENCE AT THE CENTRE ==================
+           A neural field behind J4 rather than a flat disc: the streams arrive
+           into something that looks like it is thinking. Drawn in the map's
+           own tokens, so it follows the same palette as everything else and
+           introduces no new colour. */
+        @keyframes map-synapse {
+          0%, 100% { opacity: .35; transform: scale(1); }
+          50%      { opacity: .6;  transform: scale(1.04); }
         }
+        .business-map .map-neural { animation: map-synapse 5.5s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .business-map .map-neural { animation: none; }
+        }
+        /* The dark-mode override that used to sit here held exactly these
+           values and is gone: one declaration now, so the two cannot drift. */
         .business-map .map-stage { touch-action: pan-y; }
         .business-map .hit { cursor: pointer; }
         .business-map .hit:focus-visible { outline: 2px solid var(--map-inferred); outline-offset: 3px; }
@@ -513,18 +608,92 @@ export function BusinessMapCanvas({
                         J4 without reading a single number, and the animation
                         cannot say "data is moving" where there is none.
                         verify-business-map-browser asserts exactly that. */}
-                    {c.certainty !== "unknown" && (
-                      <line
-                        data-flow={c.key}
-                        className="map-flow"
-                        x1={x1} y1={y1} x2={x2} y2={y2}
-                        stroke={certaintyColor(c.certainty)}
-                        strokeWidth={3}
-                        strokeLinecap="round"
-                        strokeDasharray="2 12"
-                        opacity={0.95}
-                      />
-                    )}
+                    {c.certainty !== "unknown" && (() => {
+                      const view = map.domains.find((d) => d.key === c.key);
+                      const indicators = indicatorsFor(c.key, services, view?.nodes.length ?? 0);
+                      // The stream runs BRANCH -> CENTRE, so offset-distance
+                      // 0%..100% is the direction the information travels.
+                      const path = `M ${x2} ${y2} L ${x1} ${y1}`;
+                      return (
+                        <>
+                          {/* The channel itself: brighter than the line under
+                              it, so a stream that carries something looks
+                              different from one that does not before anything
+                              moves at all. */}
+                          <line
+                            data-flow={c.key}
+                            x1={x1} y1={y1} x2={x2} y2={y2}
+                            stroke={certaintyColor(c.certainty)}
+                            strokeWidth={2.4}
+                            strokeLinecap="round"
+                            opacity={0.35}
+                            className="map-stream-line"
+                          />
+                          {/* ============ PARCELS, NOT A DOTTED LINE =======
+                              Sean: "the animated particles/dots should travel
+                              along the existing connection paths toward J4,
+                              rather than simply appearing as dotted lines.
+                              They should look like data packets flowing from
+                              each domain into J4."
+
+                              A dash pattern could not do this. Every dash on a
+                              stroke moves in lockstep and is evenly spaced, so
+                              it reads as one dotted line sliding — which is
+                              exactly what it was. These are separate marks on
+                              the same path, each starting at its own moment,
+                              so they read as things arriving one after
+                              another.
+
+                              offset-path rather than JavaScript: the browser
+                              owns the motion, nothing is timed in a render,
+                              and prefers-reduced-motion can stop it in CSS. */}
+                          {[0, 1, 2].map((i) => (
+                            <circle
+                              key={i}
+                              data-packet={c.key}
+                              className="map-packet"
+                              r={G.packet}
+                              fill={certaintyColor(c.certainty)}
+                              style={{ offsetPath: `path("${path}")`, animationDelay: `${i * 0.9}s` }}
+                            />
+                          ))}
+                          {/* WHAT THE STREAM IS CARRYING, riding it at fixed
+                              stations so the eye can read them while the
+                              packets move past. Never more of these than there
+                              is data — see indicatorsFor. */}
+                          {indicators.map((ind, i) => {
+                            const t = 0.34 + i * 0.17;
+                            const bx = x2 + (x1 - x2) * t;
+                            const by = y2 + (y1 - y2) * t;
+                            return (
+                              <g key={`${c.key}-ind-${i}`} data-stream-indicator={c.key} aria-hidden="true">
+                                <circle
+                                  cx={bx} cy={by} r={G.badge}
+                                  fill="var(--map-surface)"
+                                  stroke={certaintyColor(c.certainty)}
+                                  strokeWidth={1}
+                                  opacity={0.95}
+                                />
+                                {ind.src ? (
+                                  <image
+                                    href={ind.src}
+                                    x={bx - G.badge * 0.62} y={by - G.badge * 0.62}
+                                    width={G.badge * 1.24} height={G.badge * 1.24}
+                                  />
+                                ) : (
+                                  <g
+                                    transform={`translate(${bx - G.badge * 0.62}, ${by - G.badge * 0.62})`}
+                                    style={{ color: certaintyColor(c.certainty) }}
+                                  >
+                                    <J4Icon name={DOMAIN_ICON[c.key]} size={G.badge * 1.24} />
+                                  </g>
+                                )}
+                              </g>
+                            );
+                          })}
+                        </>
+                      );
+                    })()}
                   </g>
                 );
               })}
@@ -700,10 +869,30 @@ export function BusinessMapCanvas({
                 is NOT altered: it is presented through a round aperture with a
                 soft field behind it, which is how the reference composition
                 holds him too. The glow is the map's own ink, not a new colour. */}
+            {/* ============ THE NEURAL FIELD HE SITS IN (2026-09-18) ====
+                Sean's reference is a head with a lit brain, and the streams
+                arriving into it. We do not have rear-view artwork and none is
+                invented here: this is a field drawn around the canonical
+                J4Character, in the map's own tokens, so the centre reads as
+                something thinking rather than a portrait on a disc.
+
+                Behind him, so it never covers his face, and pointer-events
+                stay off it entirely. */}
+            <span
+              aria-hidden="true"
+              className="map-neural pointer-events-none absolute left-1/2 top-1/2 -z-10 block -translate-x-1/2 -translate-y-1/2 rounded-full"
+              style={{
+                width: open ? "5rem" : narrow ? "13rem" : "16rem",
+                height: open ? "5rem" : narrow ? "13rem" : "16rem",
+                background:
+                  "radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--map-known) 30%, transparent) 0%, color-mix(in oklab, var(--map-known) 12%, transparent) 38%, transparent 68%)",
+              }}
+            />
             <span
               className="relative block rounded-full"
               style={{
-                boxShadow: "0 0 0 1px color-mix(in oklab, var(--map-ink) 12%, transparent), 0 0 26px 8px color-mix(in oklab, var(--map-ink) 10%, transparent)",
+                boxShadow:
+                  "0 0 0 1px color-mix(in oklab, var(--map-known) 45%, transparent), 0 0 34px 10px color-mix(in oklab, var(--map-known) 22%, transparent)",
               }}
             >
               <span className="block overflow-hidden rounded-full">
