@@ -67,6 +67,20 @@ import {
 const MAX_LABEL_CHARS = 15;
 const MAX_SUB_CHARS = 18;
 
+/**
+ * The three states, in the order the map's own charter states them.
+ *
+ * One list, so the key cannot describe a state the picture does not draw, or
+ * miss one it does. `Certainty` is the same union businessMap.ts emits, so
+ * adding a fourth state there fails to compile here rather than quietly going
+ * unexplained on screen.
+ */
+const MAP_KEY: ReadonlyArray<{ state: Certainty; label: string }> = [
+  { state: "known", label: "from your data" },
+  { state: "inferred", label: "J4 worked it out" },
+  { state: "unknown", label: "not known yet" },
+];
+
 function ellipsise(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
@@ -190,6 +204,15 @@ export function BusinessMapCanvas({
    * A branch that exists in the model is drawn, and one that does not, is not.
    * There is no second list to forget.
    */
+  // HOW MANY BRANCHES ARE IN EACH STATE, counted off the same domains the ring
+  // is placed from — so the key and the picture cannot disagree about what is
+  // on screen.
+  const stateCounts = useMemo(() => {
+    const counts: Record<Certainty, number> = { known: 0, inferred: 0, unknown: 0 };
+    for (const d of map.domains) counts[d.certainty] += 1;
+    return counts;
+  }, [map]);
+
   const ring = useMemo<Placed[]>(() => {
     const domains = map.domains;
     return domains.map((d, i) => {
@@ -557,25 +580,64 @@ export function BusinessMapCanvas({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-black/[.06] px-4 py-2.5 text-[11px] text-[var(--map-soft)] dark:border-white/[.08]">
-          <span className="inline-flex items-center gap-1.5">
-            <i className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--map-known)" }} />
-            from your data
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <i className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--map-inferred)" }} />
-            J4 worked it out
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <i className="inline-block h-2 w-2 rounded-full border border-current" />
-            not known yet
-          </span>
+        {/* ============ WHERE J4'S KNOWLEDGE CAME FROM (2026-09-17) =======
+            businessMap.ts calls the three states "one of the core reasons
+            we're building the map... don't flatten those states for visual
+            simplicity". On a phone they were three 8px dots and 11px of grey
+            text in the corner of a footer, sharing a line with a sentence —
+            the map's central idea, presented as a caption.
+
+            Three things changed, and none of them is a badge:
+
+            1. THE SWATCH IS THE DOT. It was a filled circle for all three
+               states; on the map, "not known yet" is a HOLLOW ring — surface
+               fill, coloured stroke. The key drew a solid grey dot for a state
+               the picture draws as an outline, so the one state hardest to
+               read was the one the key described wrongly. Each swatch now
+               carries the same fill and the same 1.6px stroke as the circle it
+               stands for.
+
+            2. IT COUNTS. How many branches are in each state is the honest
+               version of the reference's "Data Health 92%" — the same question
+               asked where there is a real denominator. Nothing is estimated,
+               nothing is scored, and a zero is shown as a zero.
+
+            3. IT IS BIG ENOUGH TO READ, and the sentence has its own line
+               instead of competing for this one.
+
+            Still not a claim of certainty: "J4 worked it out" stays a separate
+            colour from "from your data" and neither is promoted into the
+            other. The count only makes the existing distinction countable. */}
+        <div className="flex flex-col gap-1.5 border-t border-black/[.06] px-4 py-3 dark:border-white/[.08]">
+          <div data-testid="map-key" className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            {MAP_KEY.map((item) => (
+              <span
+                key={item.state}
+                data-key-state={item.state}
+                className="inline-flex items-center gap-2 text-[13px] leading-none"
+              >
+                <i
+                  aria-hidden="true"
+                  data-key-swatch
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border-[1.6px]"
+                  style={{
+                    background: item.state === "unknown" ? "var(--map-surface)" : certaintyColor(item.state),
+                    borderColor: certaintyColor(item.state),
+                  }}
+                />
+                <span data-key-count className="font-semibold tabular-nums text-[var(--map-ink)]">
+                  {stateCounts[item.state]}
+                </span>
+                <span className="text-[var(--map-soft)]">{item.label}</span>
+              </span>
+            ))}
+          </div>
           {/* YOUR DATA, native to the map rather than a badge over it. */}
-          <span className="ml-auto">
+          <p className="text-[11px] text-[var(--map-soft)]">
             {open === null
               ? "This is your business data. J4 organises it for you."
               : `${domain?.label ?? ""} — what J4 has gathered about your business.`}
-          </span>
+          </p>
         </div>
       </div>
     </section>

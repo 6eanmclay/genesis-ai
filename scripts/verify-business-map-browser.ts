@@ -364,6 +364,86 @@ async function main() {
     }
 
     // ====================================================================
+    console.log("\n=== 1c. The key tells the truth about the picture ===\n");
+    // ====================================================================
+    //
+    // ============ WHY THIS IS NOT A STYLE CHECK =======================
+    //
+    // businessMap.ts calls the three states "one of the core reasons we're
+    // building the map" and says not to flatten them for visual simplicity.
+    // A key is the only thing that makes a coloured dot mean anything, so a
+    // key that disagrees with the dots is worse than none — it explains the
+    // picture wrongly, confidently.
+    //
+    // It already did, in one state. Every swatch was a FILLED circle, and on
+    // the map "not known yet" is a hollow ring: surface fill, coloured stroke.
+    // The state hardest to notice was the one the key described wrongly.
+    //
+    // So this reads both and compares them: every swatch against the circle it
+    // stands for, and every count against the branches actually drawn in that
+    // state. Nothing here asserts a colour VALUE — the palette stays a design
+    // decision. What is asserted is that the two agree.
+    {
+      const key = await page.$$eval("[data-key-state]", (els) =>
+        els.map((el) => {
+          const swatch = el.querySelector("[data-key-swatch]");
+          const s = swatch ? getComputedStyle(swatch) : null;
+          return {
+            state: el.getAttribute("data-key-state") ?? "",
+            count: Number((el.querySelector("[data-key-count]")?.textContent ?? "").trim()),
+            fill: s?.backgroundColor ?? "",
+            stroke: s?.borderTopColor ?? "",
+            size: swatch ? Math.round(swatch.getBoundingClientRect().width) : 0,
+            fontPx: Math.round(parseFloat(getComputedStyle(el).fontSize)),
+          };
+        }));
+
+      assert("the key names all three states", key.length === 3,
+        key.map((k) => k.state).join(", "));
+      assert("  in the order the charter states them",
+        key.map((k) => k.state).join(",") === "known,inferred,unknown",
+        key.map((k) => k.state).join(","));
+
+      // THE DOTS THEMSELVES, as the browser resolved them.
+      const dots = await page.$$eval("[data-branch] circle", (els) =>
+        els.map((c) => {
+          const s = getComputedStyle(c);
+          return { fill: s.fill, stroke: s.stroke };
+        }));
+      assert("  there are dots to compare against", dots.length > 0, `${dots.length}`);
+
+      for (const k of key) {
+        const matching = dots.filter((d) => d.stroke === k.stroke);
+        assert(`  "${k.state}" counts the branches actually drawn in that state`,
+          matching.length === k.count,
+          `key says ${k.count}, the map draws ${matching.length} with stroke ${k.stroke}`);
+        if (matching.length > 0) {
+          assert(`    and its swatch is drawn the same way as those dots`,
+            matching.every((d) => d.fill === k.fill),
+            `swatch fill ${k.fill}, dot fill ${matching[0].fill}`);
+        }
+      }
+
+      assert("  the counts add up to the whole map",
+        key.reduce((n, k) => n + k.count, 0) === dots.length,
+        `${key.reduce((n, k) => n + k.count, 0)} counted, ${dots.length} drawn`);
+
+      // THE THREE STAY TELLABLE APART. Flattening two of them into one colour
+      // would satisfy every comparison above and destroy the distinction the
+      // map exists to make.
+      assert("  and no two states share a colour",
+        new Set(key.map((k) => `${k.fill}|${k.stroke}`)).size === 3,
+        key.map((k) => `${k.state}=${k.fill}/${k.stroke}`).join(" "));
+
+      // LEGIBILITY, which is the complaint this answers. It was 11px text and
+      // an 8px dot in a footer corner; a number stated here means a change
+      // back fails rather than quietly shrinking.
+      assert("  it is big enough to read on a phone",
+        key.every((k) => k.fontPx >= 12 && k.size >= 10),
+        key.map((k) => `${k.state} ${k.fontPx}px/${k.size}px`).join(" "));
+    }
+
+    // ====================================================================
     console.log("\n=== 2. The orb is J4, and it holds the centre ===\n");
     // ====================================================================
     const orb = page.locator('[data-testid="map-centre"]');
