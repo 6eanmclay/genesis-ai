@@ -489,10 +489,40 @@ button:not(:disabled):not([aria-disabled="true"]):active,
 summary:active,
 input[type="submit"]:not(:disabled):active,
 input[type="button"]:not(:disabled):active,
-input[type="reset"]:not(:disabled):active,
+input[type="reset"]:not(:disabled):active {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+/* ---- A CARD CONTROL DIMS, IT DOES NOT MOVE (2026-09-17) ----
+ *
+ * These two were in the rule above, scaling like every other control, and it
+ * broke them. A label that WRAPS its input contains the very thing being
+ * pressed: scaling the label by 3% on `:active` moves the checkbox out from
+ * under the pointer between mousedown and mouseup, and the browser then fires
+ * `click` on the nearest common ancestor of the two — the row, not the input.
+ *
+ * Traced event by event rather than guessed:
+ *
+ *     pointerdown  target=INPUT#reference-choice-input-0
+ *     mousedown    target=INPUT#reference-choice-input-0
+ *     click        target=LI#reference-choice        <-- retargeted
+ *
+ * So the control never received the click and never toggled. Pressing the
+ * CARD still worked, because there both ends of the press land on the label;
+ * pressing the checkbox itself — the most obvious target on it — did nothing.
+ * The same mechanism applies to how a customer chooses to pay.
+ *
+ * Opacity alone is the acknowledgement here, and it is a real one: it is
+ * exactly what this contract already falls back to under reduced motion,
+ * where the rule is "drop the ANIMATION, not the feedback". Nothing moves, so
+ * nothing can be pressed and missed.
+ *
+ * Kept as its own rule rather than an exception bolted onto the one above,
+ * because it is a different statement: a control you press THROUGH cannot use
+ * geometry to answer you. */
 label:has(input[type="radio"]):active,
 label:has(input[type="checkbox"]):active {
-  transform: scale(0.97);
   opacity: 0.85;
 }
 

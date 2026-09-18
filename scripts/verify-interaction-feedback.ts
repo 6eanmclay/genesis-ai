@@ -238,8 +238,55 @@ async function main(): Promise<void> {
       assert("  and it visibly acknowledges the press",
         cardPressed.transform !== cardRest.transform || cardPressed.opacity !== cardRest.opacity,
         `rest ${cardRest.transform}/${cardRest.opacity} vs pressed ${cardPressed.transform}/${cardPressed.opacity}`);
-      assert("  by scaling down, like every other control",
-        cardPressed.transform.startsWith("matrix(0.97"), cardPressed.transform);
+
+      // ============ AND IT MUST NOT MOVE (2026-09-17) ==================
+      //
+      // This asserted the opposite — "by scaling down, like every other
+      // control" — and the assertion was wrong, not the code. A label that
+      // WRAPS its input contains the thing being pressed, so scaling it on
+      // `:active` moves the checkbox out from under the pointer between
+      // mousedown and mouseup. The browser then fires `click` on the nearest
+      // common ancestor of the two, which is the row:
+      //
+      //     pointerdown  target=INPUT#reference-choice-input-0
+      //     mousedown    target=INPUT#reference-choice-input-0
+      //     click        target=LI#reference-choice        <-- retargeted
+      //
+      // The control never received the click and never toggled. Pressing the
+      // CARD still worked, so it looked fine; pressing the checkbox itself —
+      // the most obvious target on it — did nothing, and the same mechanism
+      // reached how a customer chooses to pay.
+      //
+      // Caught by verify-reference-card-browser, which had been red for
+      // exactly this and was twice mis-diagnosed as pre-existing.
+      //
+      // So the requirement is BOTH halves: it acknowledges, and it holds
+      // still. Dimming is a real acknowledgement — it is what this contract
+      // already falls back to under reduced motion, where the rule is "drop
+      // the ANIMATION, not the feedback".
+      assert("  by dimming rather than moving, because you press THROUGH it",
+        cardPressed.opacity !== cardRest.opacity
+          && (cardPressed.transform === "none" || cardPressed.transform === cardRest.transform),
+        `rest ${cardRest.transform}/${cardRest.opacity} vs pressed ${cardPressed.transform}/${cardPressed.opacity}`);
+
+      // MEASURED WHILE GENUINELY PRESSED, because "it holds still" is a claim
+      // about geometry and the transform assertion above only reads a string.
+      // It is the INPUT's box that matters — that is what the pointer has to
+      // still be over when the button comes back up. A 3% scale moves it by
+      // under a pixel: small enough to look like nothing, large enough to
+      // retarget the click to the row.
+      const restBox = await page.$eval("#probe-radio input", (el) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y };
+      });
+      const pressedBox = await whilePressed(page, "#probe-radio", () =>
+        page.$eval("#probe-radio input", (el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y };
+        }));
+      assert("  and the control under the finger has not moved",
+        Math.abs(pressedBox.x - restBox.x) < 0.5 && Math.abs(pressedBox.y - restBox.y) < 0.5,
+        `input moved ${(pressedBox.x - restBox.x).toFixed(2)}, ${(pressedBox.y - restBox.y).toFixed(2)} while pressed`);
 
       // THE INVERSE, AND THE REASON THE SELECTOR IS NOT JUST `label`.
       const capRest = await styleOf(page, "#probe-caption");
