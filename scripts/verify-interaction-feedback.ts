@@ -280,6 +280,78 @@ async function main(): Promise<void> {
         cards > 0, `${cards} label-wrapped radio/checkbox controls found`);
       console.log(`      (${cards} found)`);
     }
+
+    // ==================================================================
+    console.log("\n6. No control quietly opts out with an inline style\n");
+    // ==================================================================
+    //
+    // ============ THE ONE CONTROL THAT COULD NOT ANSWER ==============
+    //
+    // The contract acknowledges a press with `transform` and `opacity`, from
+    // the stylesheet. An INLINE style beats any stylesheet rule, so a control
+    // that sets either of those on itself has silently opted out of being
+    // acknowledged — and nothing anywhere said so.
+    //
+    // One had: the Creation Station's carousel, which is how an owner chooses
+    // what to make. It set both, for depth, and so was the single control in
+    // Genesis that could not respond to being pressed. Its placement now lives
+    // on a wrapper and the button carries none of it.
+    //
+    // Checked at the source, because this is a fact about how the element is
+    // WRITTEN. A rendered check would have to find every such control on every
+    // screen first, and the ones worth catching are the ones nobody thought to
+    // look at.
+    //
+    // COMMENTS ARE STRIPPED FIRST. This repository has paid four times for a
+    // source check that matched its own prose — including once in the grep that
+    // started this very audit, where `role="[a-z]*"` matched the tail of
+    // `data-role="content"` and reported six ARIA roles that do not exist.
+    {
+      const { readdirSync, readFileSync } = await import("fs");
+      const { join } = await import("path");
+
+      const offenders: string[] = [];
+      const scan = (dir: string): void => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const p = join(dir, e.name);
+          if (e.isDirectory()) { scan(p); continue; }
+          if (!e.name.endsWith(".tsx")) continue;
+          const code = readFileSync(p, "utf8")
+            .replace(/\/\*[\s\S]*?\*\//g, " ")
+            .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+          // Each opening tag of an element that is interactive by its own
+          // semantics, up to the `>` that closes it.
+          for (const m of code.matchAll(/<(?:button|a)\b[^>]*>/g)) {
+            const tag = m[0];
+            if (tag.startsWith("<a") && !/href=/.test(tag)) continue; // not a link
+            if (!/style=\{\{/.test(tag)) continue;
+            if (/\btransform\s*:/.test(tag) || /\bopacity\s*:/.test(tag)) {
+              offenders.push(`${p.replace(process.cwd(), "").replace(/\\/g, "/")} — ${tag.slice(0, 70)}`);
+            }
+          }
+        }
+      };
+      for (const root of ["app", "components"]) scan(join(process.cwd(), root));
+
+      assert("no button or link sets transform or opacity inline",
+        offenders.length === 0,
+        offenders.slice(0, 4).join("  |  "));
+      // AND THE SCAN CAN ACTUALLY SEE TAGS, so a regex that silently matched
+      // nothing could not report a clean sweep.
+      let tagsSeen = 0;
+      const count = (dir: string): void => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const p = join(dir, e.name);
+          if (e.isDirectory()) { count(p); continue; }
+          if (!e.name.endsWith(".tsx")) continue;
+          tagsSeen += [...readFileSync(p, "utf8").matchAll(/<(?:button|a)\b[^>]*>/g)].length;
+        }
+      };
+      for (const root of ["app", "components"]) count(join(process.cwd(), root));
+      assert("  and the sweep really read the product",
+        tagsSeen > 100, `${tagsSeen} button/link tags scanned`);
+      console.log(`      (${tagsSeen} button/link tags scanned)`);
+    }
   } finally {
     await browser?.close();
     await server.close();

@@ -180,13 +180,29 @@ export function CreationStage({
         const isFocused = offset === 0;
 
         return (
-          <button
+          // ============ THE PLACE AND THE PRESS ARE TWO JOBS (2026-09-17) ==
+          //
+          // This was ONE element: a <button> carrying the depth transform
+          // inline. The interaction contract acknowledges a press with
+          // `transform: scale(.97)` and `opacity: .85` from the stylesheet, and
+          // an inline style beats any stylesheet rule — so this control, which
+          // is how an owner chooses what to make, was the one control in
+          // Genesis that could not acknowledge being pressed. Both properties
+          // the contract uses were already spoken for.
+          //
+          // Found by sweeping for the shape rather than by noticing it: an
+          // interactive element whose inline style sets transform or opacity
+          // has silently opted out, and nothing said so.
+          //
+          // So the carousel's placement moves to a wrapper and the button
+          // carries none of it. NOTHING MOVES ON SCREEN: every positional
+          // value is the same value on the same axis, one element out. The
+          // wrapper is role="presentation" so `option` stays a valid child of
+          // `listbox` — a plain <div> between them would break the tree this
+          // component is careful about everywhere else.
+          <div
             key={item.id}
-            type="button"
-            role="option"
-            aria-selected={isFocused}
-            aria-label={item.label}
-            onClick={() => (isFocused ? onChoose(item) : onIndexChange(i))}
+            role="presentation"
             className="absolute left-1/2 top-[46%] -translate-x-1/2 -translate-y-1/2 transition-all duration-500 ease-out"
             style={{
               // Depth: further back is smaller, dimmer, and behind.
@@ -197,8 +213,16 @@ export function CreationStage({
               pointerEvents: z < 0 ? "none" : "auto",
             }}
           >
-            <StageObject focused={isFocused}>{item.art}</StageObject>
-          </button>
+            <button
+              type="button"
+              role="option"
+              aria-selected={isFocused}
+              aria-label={item.label}
+              onClick={() => (isFocused ? onChoose(item) : onIndexChange(i))}
+            >
+              <StageObject focused={isFocused}>{item.art}</StageObject>
+            </button>
+          </div>
         );
       })}
 
