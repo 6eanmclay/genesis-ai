@@ -5,6 +5,9 @@ import type { BusinessMap, Certainty, MapDomainKey } from "@/lib/businessModel/b
 import { entitiesFor, type MapProspect } from "@/lib/businessModel/mapEntities";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GenesisAvatar } from "./GenesisAvatar";
+import { J4Icon, type J4IconName } from "./J4Icon";
+import { J4Character } from "@/components/j4/J4Character";
+import { useJ4State } from "@/components/j4/useJ4State";
 import { MapDataStream } from "./MapDataStream";
 import { ConnectionChooser } from "./ConnectionChooser";
 import { EntityCarousel } from "./EntityCarousel";
@@ -75,6 +78,35 @@ const MAX_SUB_CHARS = 18;
  * adding a fourth state there fails to compile here rather than quietly going
  * unexplained on screen.
  */
+/**
+ * WHAT EACH PART OF THE BUSINESS LOOKS LIKE (2026-09-17, Sean).
+ *
+ * "Small recognizable icons representing what each branch means... immediately
+ * communicating their purpose." A branch was a coloured dot and a word; the
+ * dot carried provenance and nothing carried meaning, so every branch looked
+ * like every other branch until you read it.
+ *
+ * `Record<MapDomainKey, …>` deliberately: adding a domain to MAP_DOMAINS and
+ * not giving it a face fails to COMPILE rather than drawing a nameless circle
+ * on the owner's business. That is the same guard DOMAIN_LABEL has, and the
+ * lesson DOMAIN_ORDER taught this file the hard way.
+ *
+ * Four of these glyphs did not exist and were added to the icon system rather
+ * than approximated from something close — see J4Icon.tsx.
+ */
+const DOMAIN_ICON: Record<MapDomainKey, J4IconName> = {
+  business: "business",
+  commerce: "orders",
+  customers: "customers",
+  financials: "payments",
+  goals: "goal",
+  traffic: "analytics",
+  social: "share",
+  connections: "connections",
+  creation: "idea",
+  learned: "learning",
+};
+
 const MAP_KEY: ReadonlyArray<{ state: Certainty; label: string }> = [
   { state: "known", label: "from your data" },
   { state: "inferred", label: "J4 worked it out" },
@@ -92,6 +124,10 @@ interface Geometry {
   /** Where an edge starts — the orb's rim, in viewBox units. */
   hub: number;
   dot: number;
+  /** The branch ring — large enough to hold its icon. */
+  node: number;
+  /** The glyph inside that ring. */
+  icon: number;
   label: number; sub: number; gap: number;
   hit: number;
 }
@@ -99,7 +135,7 @@ interface Geometry {
 const WIDE: Geometry = {
   w: 900, h: 560, cx: 450, cy: 280,
   ring: 258, ringSquash: 0.66,
-  hub: 62, dot: 9, label: 16, sub: 12.5, gap: 18, hit: 30,
+  hub: 78, dot: 9, node: 17, icon: 18, label: 16, sub: 12.5, gap: 22, hit: 30,
 };
 
 // Not a shrunken copy: a tighter ring with LARGER type, its radius set by the
@@ -107,7 +143,7 @@ const WIDE: Geometry = {
 const NARROW: Geometry = {
   w: 460, h: 430, cx: 230, cy: 215,
   ring: 118, ringSquash: 0.92,
-  hub: 42, dot: 7, label: 15, sub: 11.5, gap: 11, hit: 22,
+  hub: 54, dot: 7, node: 13, icon: 14, label: 15, sub: 11.5, gap: 16, hit: 22,
 };
 
 export interface MapService {
@@ -162,6 +198,11 @@ export function BusinessMapCanvas({
   const [open, setOpen] = useState<MapDomainKey | null>(null);
   const [chooserOpen, setChooserOpen] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  // ONE J4, THE SAME ONE. The centre reads the store the dock and the Office
+  // band read, so the J4 an owner just left in the corner is recognisably the
+  // one now at the middle of their business — not a second drawing of him
+  // having a different day.
+  const { state: centreState } = useJ4State();
   const [reducedMotion, setReducedMotion] = useState(true);
 
 
@@ -309,6 +350,31 @@ export function BusinessMapCanvas({
           --map-ground: #f7f9f9;
           --map-stream: #1b5fc4;
         }
+
+        /* ============ INFORMATION ARRIVING (2026-09-17) ================
+           One short dash per connection, travelling from the branch to J4.
+           stroke-dashoffset counts UP, which walks the pattern backwards
+           along a line drawn centre-to-branch — so the movement is inward,
+           which is the direction the picture is claiming.
+
+           The dash pattern is deliberately sparse (1 on, 13 off): a single
+           travelling point per line reads as a parcel of information rather
+           than as a barber's pole, and ten of them at once stay calm.
+
+           NOTHING IS TIMED IN JAVASCRIPT. This is the same technique the
+           Genesis avatar's own ribbons use, which is why it costs nothing and
+           cannot drift out of step with a render. */
+        @keyframes map-flow { to { stroke-dashoffset: 14; } }
+        .business-map .map-flow {
+          stroke-dashoffset: 0;
+          animation: map-flow 1.5s linear infinite;
+        }
+        /* Motion is the only thing removed. The travelling dash becomes a
+           static one, so the connection still reads as carrying something and
+           nobody is made to watch it move. */
+        @media (prefers-reduced-motion: reduce) {
+          .business-map .map-flow { animation: none; }
+        }
         @media (prefers-color-scheme: dark) {
           .business-map {
             --map-known: #5fb98f;
@@ -412,15 +478,54 @@ export function BusinessMapCanvas({
                 const dx = c.x - G.cx;
                 const dy = c.y - G.cy;
                 const len = Math.hypot(dx, dy) || 1;
+                const x1 = G.cx + (dx / len) * G.hub;
+                const y1 = G.cy + (dy / len) * G.hub;
+                // Stop at the RING, not the centre of it, so the line meets
+                // the icon's edge rather than running under the glyph.
+                const x2 = c.x - (dx / len) * G.node;
+                const y2 = c.y - (dy / len) * G.node;
                 return (
-                  <line key={`e-${c.key}`}
-                    x1={G.cx + (dx / len) * G.hub} y1={G.cy + (dy / len) * G.hub}
-                    x2={c.x} y2={c.y}
-                    stroke={certaintyColor(c.certainty)}
-                    strokeWidth={c.certainty === "unknown" ? 1 : 1.6}
-                    strokeDasharray={c.certainty === "unknown" ? "4 5" : undefined}
-                    opacity={c.certainty === "unknown" ? 0.4 : 0.5}
-                  />
+                  <g key={`e-${c.key}`}>
+                    <line
+                      x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke={certaintyColor(c.certainty)}
+                      strokeWidth={c.certainty === "unknown" ? 1 : 1.6}
+                      strokeDasharray={c.certainty === "unknown" ? "4 5" : undefined}
+                      opacity={c.certainty === "unknown" ? 0.35 : 0.75}
+                    />
+                    {/* ============ THE CONNECTION IS ALIVE, AND ONLY WHERE
+                        THERE IS SOMETHING TO CARRY (2026-09-17, Sean) ========
+
+                        "The connection itself should visually communicate that
+                        J4 is taking information from that part of the business
+                        and organizing it."
+
+                        So a second stroke runs along the same line, dashed and
+                        travelling — and it travels TOWARDS the centre, because
+                        that is the direction the sentence describes. J4 is
+                        taking it in, not broadcasting it out.
+
+                        THE MOVEMENT IS EVIDENCE, NOT DECORATION, and that is
+                        the part worth defending. A branch J4 knows nothing
+                        about carries nothing, so it gets no flow at all — its
+                        line stays the static dashed one above. An owner can
+                        read which parts of their business are actually feeding
+                        J4 without reading a single number, and the animation
+                        cannot say "data is moving" where there is none.
+                        verify-business-map-browser asserts exactly that. */}
+                    {c.certainty !== "unknown" && (
+                      <line
+                        data-flow={c.key}
+                        className="map-flow"
+                        x1={x1} y1={y1} x2={x2} y2={y2}
+                        stroke={certaintyColor(c.certainty)}
+                        strokeWidth={3}
+                        strokeLinecap="round"
+                        strokeDasharray="2 12"
+                        opacity={0.95}
+                      />
+                    )}
+                  </g>
                 );
               })}
 
@@ -481,9 +586,44 @@ export function BusinessMapCanvas({
                           fill="transparent" />
                       );
                     })()}
-                    <circle cx={c.x} cy={c.y} r={G.dot}
+                    {/* ============ THE NODE IS A FACE NOW (2026-09-17) =====
+                        Sean: "meaningful icon → domain → real data... They
+                        should feel alive, interactive and fun while still
+                        immediately communicating their purpose."
+
+                        THE PROVENANCE CIRCLE IS UNTOUCHED, and that is the
+                        point. This <circle> still carries the fill and the
+                        1.6px stroke that say which of the three states the
+                        branch is in, and the key still reproduces it exactly —
+                        the ring simply grew enough to hold something inside
+                        it. An icon that replaced the circle would have traded
+                        the map's central meaning for decoration.
+
+                        NOT A CARD. The branch stays a mark on the stage with
+                        its name beside it: no border, no panel, no radius. The
+                        reference composition puts every domain in a rounded
+                        box, and the room this map lives in is boxless by an
+                        approved decision. */}
+                    <circle
+                      /* NAMED, because the branch now contains other circles.
+                         Three icons are drawn with them — customers, share and
+                         goal — so "[data-branch] circle" started counting
+                         glyph internals as provenance dots and the key's
+                         counts stopped matching the picture. The dot says
+                         which dot it is. */
+                      data-branch-dot={c.key}
+                      cx={c.x} cy={c.y} r={G.node}
                       fill={c.certainty === "unknown" ? "var(--map-surface)" : certaintyColor(c.certainty)}
                       stroke={certaintyColor(c.certainty)} strokeWidth={1.6} />
+                    {/* The glyph sits ON the state colour, so it reads against
+                        a filled ring and a hollow one alike. */}
+                    <g
+                      data-branch-icon={c.key}
+                      transform={`translate(${c.x - G.icon / 2}, ${c.y - G.icon / 2})`}
+                      style={{ color: c.certainty === "unknown" ? "var(--map-unknown)" : "var(--map-surface)" }}
+                    >
+                      <J4Icon name={DOMAIN_ICON[c.key]} size={G.icon} />
+                    </g>
                     {/* LABELS ONLY WHERE THEY CAN BE READ. Behind the carousel
                         the ring is structure, not text — 2.2x type sliding
                         under a card is noise, and half of it would be off the
@@ -530,15 +670,54 @@ export function BusinessMapCanvas({
                 remounted - because verify-business-map-browser tracks its
                 identity through the open/close transition and a redrawn
                 centre would fail that on purpose. */}
+            {/* ============ AND BACK TO J4, DELIBERATELY (2026-09-17) ======
+                The paragraph above is the 2026-09-04 decision and it has been
+                reversed by the person who made it. Sean, with a reference
+                composition: "I want the J4 head to be the intelligence at the
+                center, not a generic glowing ball... Use the canonical J4
+                artwork and the correct J4 emblem."
+
+                What sat here was neither J4 nor the business: a radial
+                gradient in a span. The 2026-09-04 concern was a COMPETING J4
+                identity — a second, different drawing of him floating in the
+                middle of the map. That is not what this is. It is the same
+                J4Character the dock and the Office band render, reading the
+                same `useJ4State` they read, so there is one J4 in the
+                application who happens to be at the centre of his own map
+                rather than two pictures disagreeing about who he is.
+
+                THE ELEMENT AROUND HIM IS UNTOUCHED — same node, same testid,
+                never remounted — because the suite tracks the centre's
+                identity through the open/close transition and a redrawn
+                centre fails that on purpose.
+
+                The box keeps its former size at both states, so the edges
+                still stop exactly at the rim they always stopped at. */}
+            {/* HE SITS IN THE MAP RATHER THAN ON IT.
+                The artwork is a square frame with a dark ground baked into it,
+                which is right in his own corner and read as a photograph
+                pasted onto this one — the map's surface is light. The artwork
+                is NOT altered: it is presented through a round aperture with a
+                soft field behind it, which is how the reference composition
+                holds him too. The glow is the map's own ink, not a new colour. */}
             <span
-              aria-hidden="true"
-              className={`block rounded-full ${open ? "h-7 w-7" : "h-16 w-16"}`}
+              className="relative block rounded-full"
               style={{
-                background:
-                  "radial-gradient(circle at 38% 34%, var(--map-ink) 0%, var(--map-soft) 42%, transparent 72%)",
-                opacity: 0.55,
+                boxShadow: "0 0 0 1px color-mix(in oklab, var(--map-ink) 12%, transparent), 0 0 26px 8px color-mix(in oklab, var(--map-ink) 10%, transparent)",
               }}
-            />
+            >
+              <span className="block overflow-hidden rounded-full">
+                <J4Character
+                  state={centreState}
+                  /* SIZED TO THE RIM THE EDGES STOP AT, per breakpoint, so the
+                     connections meet him instead of vanishing underneath.
+                     `narrow` is the same flag the geometry itself switches on,
+                     so the two cannot disagree about which map is on screen. */
+                  size={open ? 28 : narrow ? 78 : 98}
+                  title={`J4 — ${centreState}`}
+                />
+              </span>
+            </span>
             {/* The branch reads as flowing OUT of J4, which is the direction
                 Sean drew: orb, then down, then the things. */}
             {open && domain && (

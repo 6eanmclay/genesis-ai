@@ -39,7 +39,12 @@ export type J4IconName =
   | "search"
   | "alert"
   | "chevron"
-  | "close";
+  | "close"
+  // The four the Business Map added (2026-09-17); see PATHS below.
+  | "idea"
+  | "learning"
+  | "share"
+  | "goal";
 
 // Paths only — every shared attribute (stroke, width, caps, joins) lives on
 // the <svg> below so a single icon can never drift from the system.
@@ -166,6 +171,53 @@ const PATHS: Record<J4IconName, React.ReactNode> = {
   ),
   chevron: <path d="m9 5 7 7-7 7" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
+
+  // ============ FOUR DOMAINS THE MAP NEEDED A FACE FOR (2026-09-17) =====
+  //
+  // The Business Map gives every branch an icon, so a glance says what that
+  // part of the business IS before the label is read. Six of the ten domains
+  // already had one here — business, orders, customers, payments, connections
+  // and analytics. These four did not.
+  //
+  // Added rather than approximated. Pointing Creation at `camera` or Goals at
+  // `tasks` would have shipped a picture that means something else, which is
+  // the opposite of why the icons are there: an icon that has to be decoded
+  // from its label is decoration wearing a label's clothes.
+  //
+  // Drawn to this file's own rules — paths only, no per-icon stroke, cap or
+  // colour, so they cannot drift from the system they join.
+
+  /** Creation — an idea, before it is a product. */
+  idea: (
+    <>
+      <path d="M12 3a6 6 0 0 0-3.6 10.8c.4.3.6.8.6 1.3v.4h6v-.4c0-.5.2-1 .6-1.3A6 6 0 0 0 12 3Z" />
+      <path d="M9.5 18.5h5M10.5 21h3" />
+    </>
+  ),
+  /** Learned — what J4 has worked out and kept. */
+  learning: (
+    <>
+      <path d="M12 4 2.5 8.5 12 13l9.5-4.5L12 4Z" />
+      <path d="M6.5 10.8V15c0 1.4 2.5 2.6 5.5 2.6s5.5-1.2 5.5-2.6v-4.2" />
+    </>
+  ),
+  /** Social — reach that travels outward, node to node. */
+  share: (
+    <>
+      <circle cx="18" cy="5.5" r="2.5" />
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="18" cy="18.5" r="2.5" />
+      <path d="m8.2 10.8 7.6-3.9M8.2 13.2l7.6 3.9" />
+    </>
+  ),
+  /** Goals — something aimed at, which is not the same as a task. */
+  goal: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="12" cy="12" r="1" />
+    </>
+  ),
 };
 
 export function J4Icon({

@@ -405,7 +405,7 @@ async function main() {
         key.map((k) => k.state).join(","));
 
       // THE DOTS THEMSELVES, as the browser resolved them.
-      const dots = await page.$$eval("[data-branch] circle", (els) =>
+      const dots = await page.$$eval("[data-branch-dot]", (els) =>
         els.map((c) => {
           const s = getComputedStyle(c);
           return { fill: s.fill, stroke: s.stroke };
@@ -444,6 +444,81 @@ async function main() {
     }
 
     // ====================================================================
+    console.log("\n=== 1d. Every branch has a face, and the live ones are live ===\n");
+    // ====================================================================
+    //
+    // ============ WHAT THIS IS FOR (2026-09-17, Sean) =================
+    //
+    // "J4 head -> live connection -> meaningful icon -> domain -> real data...
+    // The connection itself should visually communicate that J4 is taking
+    // information from that part of the business and organizing it."
+    //
+    // Two things there can rot in opposite directions. An icon can go missing
+    // or be shared between domains, and then it says nothing. And the movement
+    // can spread to branches that carry nothing, at which point it stops being
+    // evidence and becomes an animation — a map that looks busy everywhere,
+    // including where J4 knows nothing at all.
+    {
+      const drawnBranches = await page.$$eval("[data-branch]", (els) =>
+        els.map((el) => el.getAttribute("data-branch") ?? ""));
+      const icons = await page.$$eval("[data-branch-icon]", (els) =>
+        els.map((el) => ({
+          key: el.getAttribute("data-branch-icon") ?? "",
+          // The glyph's own geometry, so an empty <g> cannot pass as an icon.
+          paths: el.querySelectorAll("path, circle, rect").length,
+          w: Math.round(el.getBoundingClientRect().width),
+        })));
+
+      assert("every branch draws an icon",
+        icons.length === drawnBranches.length,
+        `${icons.length} icons for ${drawnBranches.length} branches`);
+      assert("  each one is really drawn, not an empty group",
+        icons.every((i) => i.paths > 0 && i.w > 0),
+        icons.filter((i) => i.paths === 0 || i.w === 0).map((i) => i.key).join(", "));
+
+      // A SHARED GLYPH IS A MISSING GLYPH. Two domains wearing one picture
+      // tells an owner nothing about either — the defect that put Business and
+      // Storefront on the same house, recorded in J4Icon.tsx.
+      const shapes = await page.$$eval("[data-branch-icon]", (els) =>
+        els.map((el) => ({
+          key: el.getAttribute("data-branch-icon") ?? "",
+          d: [...el.querySelectorAll("path, circle, rect")]
+            .map((n) => n.getAttribute("d") ?? `${n.tagName}:${n.getAttribute("r") ?? ""}${n.getAttribute("cx") ?? ""}`)
+            .join("|"),
+        })));
+      assert("  and no two branches wear the same one",
+        new Set(shapes.map((s) => s.d)).size === shapes.length,
+        shapes.map((s) => s.key).join(", "));
+
+      // ---- THE FLOW IS EVIDENCE, NOT DECORATION -----------------------
+      const flowing = await page.$$eval("[data-flow]", (els) =>
+        els.map((el) => el.getAttribute("data-flow") ?? ""));
+      const known = await page.$$eval("[data-branch-dot]", (els) =>
+        els.map((c) => getComputedStyle(c).stroke));
+      const unknownStroke = await page.$eval('[data-key-state="unknown"] [data-key-swatch]',
+        (el) => getComputedStyle(el).borderTopColor);
+      const withData = known.filter((s) => s !== unknownStroke).length;
+
+      assert("information is shown travelling on the branches that have it",
+        flowing.length === withData,
+        `${flowing.length} connections animate, ${withData} branches have data`);
+      assert("  and on no branch that has none",
+        flowing.length > 0 && flowing.length < drawnBranches.length,
+        `${flowing.length} of ${drawnBranches.length} — this fixture must have both kinds for the check to mean anything`);
+
+      // AND IT TRAVELS. A dash pattern with no animation is a dotted line.
+      const animated = await page.$eval("[data-flow]", (el) => {
+        const s = getComputedStyle(el);
+        return { name: s.animationName, dur: s.animationDuration, dash: s.strokeDasharray };
+      });
+      assert("  the connection is genuinely moving, not a dotted line",
+        animated.name === "map-flow" && parseFloat(animated.dur) > 0,
+        `${animated.name} ${animated.dur}`);
+      assert("  carrying a travelling mark rather than a solid stroke",
+        /\d/.test(animated.dash) && animated.dash !== "none", animated.dash);
+    }
+
+    // ====================================================================
     console.log("\n=== 2. The orb is J4, and it holds the centre ===\n");
     // ====================================================================
     const orb = page.locator('[data-testid="map-centre"]');
@@ -462,9 +537,28 @@ async function main() {
     assert("the centre renders the business hub",
       (await orb.count()) === 1 && String(await orb.innerHTML().catch(() => "")).length > 0,
       String(await orb.innerHTML().catch(() => "")).slice(0, 120));
-    assert("and it is NOT a second J4 on the map",
+    // ============ AND BACK TO J4 (2026-09-17, Sean) ===================
+    //
+    // This is the second reversal of this line and the history is the point.
+    // 2026-09-02: the centre IS J4. 2026-09-04: it is the business, not J4,
+    // because "a second J4 floating in the middle of the map is exactly the
+    // competing representation that rule exists to stop". Both were Sean's.
+    //
+    // What actually shipped under the second decision was neither: a radial
+    // gradient in a span. Sean, with a reference composition: "I want the J4
+    // head to be the intelligence at the center, not a generic glowing ball...
+    // Use the canonical J4 artwork and the correct J4 emblem."
+    //
+    // The 2026-09-04 concern was a COMPETING identity — a second, different
+    // drawing of him. So that is what is still asserted, from the other side:
+    // the centre must be the canonical J4Character, the same component the
+    // dock and the Office band render. One J4, at the middle of his own map.
+    assert("the centre is J4 himself, in the canonical artwork",
+      (await orb.locator("[data-j4-state]").count()) === 1,
+      "the map's centre must be the same J4Character the dock renders");
+    assert("  and not a second, different drawing of him",
       (await orb.locator('img[alt="Genesis"]').count()) === 0,
-      "the map must not carry a competing J4 identity");
+      "one J4 identity: the orb avatar is not a second J4 beside the character");
     assert("and it says nothing at all at the top level",
       ((await orb.textContent()) ?? "").trim() === "",
       ((await orb.textContent()) ?? "").trim());
