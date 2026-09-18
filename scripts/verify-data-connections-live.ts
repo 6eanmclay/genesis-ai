@@ -1,6 +1,7 @@
 import { startTestServer } from "@/scripts/lib/testServer";
 import { signIn } from "@/scripts/lib/httpSession";
-import { CONNECTION_CATEGORY_LABELS } from "@/lib/integrations/catalog";
+import { CONNECTION_CATEGORY_LABELS, CONNECTOR_CATALOG } from "@/lib/integrations/catalog";
+import { allConnectors } from "@/lib/integrations/registry";
 
 // DATA & CONNECTIONS TELLS THE TRUTH ABOUT WHAT J4 KNOWS (2026-09-12):
 //
@@ -69,6 +70,29 @@ function sectionOf(page: string, heading: string, until: string[]): string {
 }
 
 const HEADINGS = ["What that lets J4 do", "Where it comes from", "Needs you", "Recommended for"];
+
+/**
+ * ONE PLATFORM APP, SO THERE IS AN AVAILABLE PROVIDER TO FAIL (2026-09-17).
+ *
+ * `configured()` asks whether GENESIS has an OAuth app registered with a
+ * provider — a fact about this platform, not about any owner's account. In
+ * production the answer is yes for the connectors that have one; in a bare
+ * harness it is no for every single data-carrying connector on this page, and
+ * "unavailable" outranks a stored failure by design. Section 2 then has no
+ * provider whose failure could be shown, and its own guard says so rather than
+ * passing on nothing.
+ *
+ * So the harness registers one, the same way testServer already sets
+ * STRIPE_SECRET_KEY: "sk_test_harness" for every suite. Set before the server
+ * starts, because it is spawned with this process's environment.
+ *
+ * NOTHING IS CALLED AND NOTHING IS REAL. No request reaches Mailchimp in this
+ * suite; the failure under test is a row written directly into the database.
+ * These two values exist only to make this environment resemble production in
+ * the one respect the section depends on — that a platform app exists at all.
+ */
+process.env.MAILCHIMP_CLIENT_ID ||= "harness-platform-app-not-a-real-one";
+process.env.MAILCHIMP_CLIENT_SECRET ||= "harness-platform-app-not-a-real-one";
 
 async function main(): Promise<void> {
   const server = await startTestServer();
@@ -173,12 +197,51 @@ async function main(): Promise<void> {
     // of this section asserted against QuickBooks and failed against entirely
     // correct behaviour. Mailchimp declares no `configured`, so it is
     // available and a failure on it is visible.
+    // ============ AND MAILCHIMP STOPPED BEING THAT (2026-09-17) =========
+    //
+    // The paragraph above is still true and its conclusion stopped being: a
+    // later fix gave Mailchimp the `configured()` it was missing (see
+    // registry.ts's own note about "the mirrored-registry failure that let
+    // Mailchimp's missing configured() sit"). In a harness with no Mailchimp
+    // OAuth app that makes it unavailable, unavailable outranks a stored
+    // failure by design, and this section began failing against entirely
+    // correct behaviour — exactly what it says happened with QuickBooks,
+    // one provider later.
+    //
+    // Naming a third provider by hand would buy the same failure a third time.
+    // What this section actually needs is "a provider that is AVAILABLE here
+    // and can carry data", so that is what it asks the registry for:
+    //
+    //   available  — configured() is true, or absent, which means nothing to
+    //                configure. The connector decides; no list decides for it.
+    //   a feed     — it implements sync. The suite's own words further down:
+    //                "it implements no sync: the absence of `sync` here is the
+    //                answer". A rail's failure belongs to section 3.
+    //
+    // If that set is ever empty the section would pass by testing nothing, so
+    // it fails loudly instead.
+    // A third condition, and it was earned: the first version of this filter
+    // chose EasyPost, which satisfies both of the above and is not on this
+    // page at all — "EasyPost sits behind shipping", as the paragraph further
+    // down already says of it. A provider has to be IN THE CATALOGUE to be
+    // something this screen could ever show.
+    const feedsOnThisPage = allConnectors()
+      .filter(([, c]) => (c.configured?.() ?? true) && typeof c.sync === "function")
+      .map(([p]) => ({ provider: p, entry: CONNECTOR_CATALOG.find((e) => e.provider === p) }))
+      .filter((x): x is { provider: typeof x.provider; entry: NonNullable<typeof x.entry> } => !!x.entry);
+    assert("a provider that could show a failure exists in this environment",
+      feedsOnThisPage.length > 0,
+      "every data-carrying connector on this page reports itself unconfigured — this section would prove nothing");
+    const failedProvider = feedsOnThisPage[0].provider;
+    const failedName = feedsOnThisPage[0].entry.name;
+    console.log(`        (failure shown through ${failedName})`);
+
     const broken = await makeOwner("broken");
     const PROVIDER_WORDS = "The account was a test account created with a testmode key";
     await db.prisma.storeIntegration.create({
       data: {
         storeId: broken.store.id,
-        provider: "MAILCHIMP",
+        provider: failedProvider,
         status: "FAILED",
         lastError: PROVIDER_WORDS,
         syncFailureCount: 1,
@@ -188,7 +251,7 @@ async function main(): Promise<void> {
     });
     const brokenPage = textOf(await pageFor(broken));
     assert("the failure is surfaced under Needs you",
-      sectionOf(brokenPage, "Needs you", ["Recommended for", "Where it comes from"]).includes("Mailchimp"),
+      sectionOf(brokenPage, "Needs you", ["Recommended for", "Where it comes from"]).includes(failedName),
       sectionOf(brokenPage, "Needs you", ["Recommended for"]).slice(0, 200));
     assert("  and the provider's message is verbatim, not rewritten",
       brokenPage.includes(PROVIDER_WORDS),
