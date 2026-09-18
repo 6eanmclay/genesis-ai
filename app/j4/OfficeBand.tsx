@@ -62,10 +62,28 @@ import type { QuickAction } from "@/lib/j4/officeQuickActions";
 export function OfficePresence({
   storeName,
   state,
+  /**
+   * WHOSE PAGE THIS IS (2026-09-17).
+   *
+   * The room IS the page, so "J4 Office" is its h1. The layer is an overlay
+   * over a business page that already has one — and because J4Overlay keeps
+   * the Office MOUNTED while closed, giving the layer this band put a second
+   * top-level heading into the DOM of every dashboard page, where it shadowed
+   * the page's own. verify-business-map-browser found it immediately: its
+   * "the greeting is above the map" passed against the closed overlay's
+   * heading and "and it is the welcome" then failed on the text.
+   *
+   * Two h1s is wrong on the page regardless of who reads it first. The heading
+   * is the same words and the same size either way; only its level follows the
+   * surface, which is what heading levels are for.
+   */
+  heading = "h1",
 }: {
   storeName: string;
   state: J4State;
+  heading?: "h1" | "h2";
 }) {
+  const Heading = heading;
   return (
     <section
       data-testid="office-presence"
@@ -97,9 +115,9 @@ export function OfficePresence({
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h1 className="text-[19px] font-semibold tracking-tight text-white sm:text-[22px]">
+            <Heading className="text-[19px] font-semibold tracking-tight text-white sm:text-[22px]">
               J4 Office
-            </h1>
+            </Heading>
             <p className="truncate text-[13px] text-white/45">{storeName}</p>
           </div>
         </div>

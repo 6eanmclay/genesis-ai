@@ -2232,7 +2232,9 @@ export function J4Workspace({
           What stays pinned is what the owner needs from anywhere: whose room
           this is, and the rail below. The rest moved into the scrolling
           region, below the work, as OfficeGrounding. */}
-      {showsOfficeBand && <OfficePresence storeName={storeName} state={j4State} />}
+      {showsOfficeBand && (
+        <OfficePresence storeName={storeName} state={j4State} heading={isLayer ? "h2" : "h1"} />
+      )}
 
       {!talkingOnly && (
         <div

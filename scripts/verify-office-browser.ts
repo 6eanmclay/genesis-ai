@@ -1043,8 +1043,25 @@ async function main() {
       // The same mistake in the other direction — a check that depends on a
       // position nobody set.
       await rail.evaluate((el) => { el.scrollLeft = 0; });
+      // WAITED ON THE OTHER HALF OF THE ANSWER, deliberately.
+      //
+      // The first version waited for scrollLeft to be 0 and then read
+      // data-rail-more — but that attribute is React state, written by the
+      // rail's scroll listener, so the wait finished a render before the
+      // attribute it was about to assert on. Intermittently it read the
+      // previous value and failed on "data-rail-more=left".
+      //
+      // Waiting for the attribute to say "right" would make the assertion
+      // below true by construction. So this waits for the half that is NOT
+      // asserted: scrollLeft is 0, therefore there is nothing to the LEFT, and
+      // the component has processed the scroll once it says so. The claim
+      // under test — that it reports what is off-screen to the RIGHT — is
+      // still free to be wrong, and the sabotage run proves it fails when the
+      // component stops reporting.
       await page
-        .waitForFunction(() => document.querySelector('[data-testid="office-rail"]')?.scrollLeft === 0,
+        .waitForFunction(() =>
+          !(document.querySelector('[data-testid="office-rail"]')?.getAttribute("data-rail-more") ?? "")
+            .includes("left"),
           undefined, { timeout: 5_000 })
         .catch(() => {});
 
