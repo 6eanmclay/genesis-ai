@@ -1,5 +1,6 @@
 "use client";
 
+import { StoreImage } from "../../StoreImage";
 import { useActionState, useState } from "react";
 import { createCheckoutSession, previewCheckoutPrice } from "../../actions";
 import type { CheckoutPreviewState } from "@/lib/promotions/checkoutPreview";
@@ -69,10 +70,15 @@ export function CheckoutReview({
 
       <div className="mt-4 flex items-center gap-4">
         {imageUrl && (
-          // Same reason as the bag line: Blob-hosted images cannot go through
-          // next/image without remotePatterns this app does not configure.
-          // eslint-disable-next-line @next/next/no-img-element -- see BagLine
-          <img src={imageUrl} alt={productName} className="h-16 w-16 rounded-xl object-cover" />
+          // Same as the bag line: remotePatterns now exists, so this is a
+          // real next/image on a fixed 64px box.
+          <StoreImage
+            src={imageUrl}
+            alt={productName}
+            width={64}
+            height={64}
+            className="h-16 w-16 rounded-xl object-cover"
+          />
         )}
         <h1 className="text-[22px] font-semibold text-[var(--brand-text)]">{productName}</h1>
       </div>

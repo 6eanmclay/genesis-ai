@@ -8,6 +8,7 @@
 // only when a product actually has more than one image, letting a
 // customer swap the hero client-side (no page reload) rather than a real,
 // separate gallery component being needed for the single-image case.
+import { StoreImage } from "../../StoreImage";
 import { useState } from "react";
 
 export function ProductGallery({
@@ -24,10 +25,19 @@ export function ProductGallery({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className={className}>
+      {/* `relative` is added here rather than asked of the caller, for the
+          same reason as ProductImage: `fill` needs a positioned ancestor and
+          the caller's class string describes a box, not a positioning
+          context. The rendered box is unchanged. */}
+      <div className={`relative ${className ?? ""}`}>
         {selected ? (
-          // eslint-disable-next-line @next/next/no-img-element -- Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config, same reasoning as every other Blob-sourced image in this app
-          <img src={selected.url} alt={productName} className="h-full w-full object-cover" />
+          <StoreImage
+            src={selected.url}
+            alt={productName}
+            fill
+            sizes="(min-width: 768px) 50vw, 100vw"
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-sm text-[var(--brand-text-secondary)]">
             No image
@@ -48,8 +58,17 @@ export function ProductGallery({
                 i === selectedIndex ? "border-[var(--brand-accent)]" : "border-transparent opacity-70 hover:opacity-100"
               }`}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element -- same reasoning as the hero image above */}
-              <img src={image.url} alt="" className="h-full w-full object-cover" />
+              {/* A FIXED 64px BOX, SO IT GETS FIXED DIMENSIONS RATHER THAN
+                  `fill`. This is the worst offender on the page: every
+                  thumbnail used to pull the whole 1024x1024 original to fill
+                  64 CSS pixels. */}
+              <StoreImage
+                src={image.url}
+                alt=""
+                width={64}
+                height={64}
+                className="h-full w-full object-cover"
+              />
             </button>
           ))}
         </div>

@@ -1,3 +1,4 @@
+import { StoreImage } from "../StoreImage";
 import Link from "next/link";
 import { formatMoney } from "@/lib/money";
 import type { DisplayPrice } from "@/lib/pricing/displayPrice";
@@ -39,16 +40,19 @@ export function BagLine({
   return (
     <div className="flex gap-4">
       {imageUrl ? (
-        // A PLAIN <img>, LIKE THE REST OF THE STOREFRONT. next/image was used
-        // here first and rendered a broken thumbnail on every line: product
-        // images live on Vercel Blob, an arbitrary per-deployment host that
-        // next/image will not load without remotePatterns config this app
-        // deliberately does not carry — which is why ProductImage and
-        // ProductGallery already use <img> with the lint rule disabled.
-        // eslint-disable-next-line @next/next/no-img-element -- see above
-        <img
+        // NOW A REAL next/image (2026-09-18). The earlier attempt here did
+        // render a broken thumbnail, but the reason recorded alongside it was
+        // wrong: Blob is not "an arbitrary per-deployment host". The
+        // subdomain is the blob STORE id and is fixed for the store's
+        // lifetime, so one remotePatterns entry in next.config.ts covers it
+        // permanently — which is what was actually missing.
+        //
+        // Fixed 80px box, so explicit dimensions rather than `fill`.
+        <StoreImage
           src={imageUrl}
           alt={name}
+          width={80}
+          height={80}
           className="h-20 w-20 shrink-0 rounded-xl object-cover"
         />
       ) : (

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { StoreImage } from "./StoreImage";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
@@ -466,7 +467,12 @@ export default async function StorefrontPage({
                     className={`flex flex-col ${gap} p-4 sm:flex-row sm:items-center ${cardClass}`}
                   >
                     <div className="aspect-square w-full shrink-0 overflow-hidden rounded-xl bg-[var(--brand-text)]/[.05] sm:w-32">
-                      <ProductImage product={product} className="h-full w-full object-cover" />
+                      {/* Full width stacked, a fixed 128px rail from sm up. */}
+                      <ProductImage
+                        product={product}
+                        className="h-full w-full object-cover"
+                        sizes="(min-width: 640px) 128px, 100vw"
+                      />
                     </div>
                     <div className="flex-1">
                       <h3 className="font-[family-name:var(--font-heading)] font-semibold">
@@ -499,7 +505,12 @@ export default async function StorefrontPage({
                   className={`grid grid-cols-1 items-center overflow-hidden border border-[var(--brand-text)]/[.08] bg-[var(--brand-surface)] ${cardRadius} ${shadow} md:grid-cols-2`}
                 >
                   <div className="aspect-square w-full overflow-hidden bg-[var(--brand-text)]/[.05]">
-                    <ProductImage product={products[0]} className="h-full w-full object-cover" />
+                    {/* The featured layout gives the image half the row from md up. */}
+                    <ProductImage
+                      product={products[0]}
+                      className="h-full w-full object-cover"
+                      sizes="(min-width: 768px) 50vw, 100vw"
+                    />
                   </div>
                   <div className="p-6 md:p-8">
                     <p className="text-xs font-medium uppercase tracking-wide text-[var(--brand-accent)]">
@@ -735,10 +746,19 @@ export default async function StorefrontPage({
               </p>
               {renderHeroCta()}
             </div>
-            <div className={`design-hero-image aspect-square w-full overflow-hidden ${imageFrame}`}>
+            <div className={`design-hero-image relative aspect-square w-full overflow-hidden ${imageFrame}`}>
               {heroImage ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={heroImage} alt={storeName} className="h-full w-full object-cover" />
+                // `preload`, NOT `priority` — Next 16 deprecated the latter.
+                // This is the storefront's LCP element, so it is the one
+                // image on the page worth fetching from the <head>.
+                <StoreImage
+                  src={heroImage}
+                  alt={storeName}
+                  fill
+                  preload
+                  sizes="(min-width: 768px) 50vw, 100vw"
+                  className="h-full w-full object-cover"
+                />
               ) : (
                 <div className="h-full w-full bg-gradient-to-br from-[var(--brand-primary)] via-[var(--brand-accent)] to-[var(--brand-secondary)]" />
               )}
@@ -940,9 +960,11 @@ function ProductCard({
     <li className={cardClass}>
       <Link href={`/store/${slug}/products/${product.id}`}>
         <div className="aspect-square w-full overflow-hidden bg-[var(--brand-text)]/[.05]">
+          {/* One, two, then three across inside a max-w-5xl grid. */}
           <ProductImage
             product={product}
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            sizes="(min-width: 1024px) 341px, (min-width: 640px) 50vw, 100vw"
           />
         </div>
       </Link>

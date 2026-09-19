@@ -30,6 +30,53 @@ const nextConfig: NextConfig = {
   // encountered." And it is a development-only element — production has never
   // rendered it, so this changes nothing an owner has ever seen.
   devIndicators: false,
+
+  // ============ BLOB IMAGES GO THROUGH THE OPTIMIZER (2026-09-18) ========
+  //
+  // Until now every storefront image was a raw <img> on the full-size Blob
+  // original. Three components carried a comment explaining why, all saying
+  // the same thing: Blob is "an arbitrary per-deployment host that next/image
+  // will not load without remotePatterns config this app deliberately does
+  // not carry."
+  //
+  // THE PREMISE WAS WRONG. A Blob public URL is
+  // `<storeId>.public.blob.vercel-storage.com` — the subdomain is the STORE
+  // id, fixed for the lifetime of the store, not per deployment. One pattern
+  // covers it permanently. The earlier attempt failed for a real reason (no
+  // config at all) but the stated reason for never adding the config does
+  // not hold, so the images have been shipping unoptimized for nothing.
+  //
+  // WHAT THIS IS WORTH. Product images are 1024x1024 PNGs (see
+  // generatedImageProvider) at 1.5-2MB each, and the storefront homepage
+  // renders EVERY active product at full resolution. Caching does not help:
+  // Vercel bills Blob Data Transfer on every download including cache hits.
+  // The optimizer is the only lever that moves the meter — it pulls each
+  // original from Blob once and then serves cached variants as Fast Data
+  // Transfer, off the Blob meter entirely.
+  //
+  // `search: ""` forbids query strings, so a caller cannot smuggle an
+  // arbitrary upstream through a `?url=` tail. SVG stays disallowed (the
+  // default) and needs no exception: every writer that can reach a
+  // storefront image URL is constrained to png/jpeg/webp — see
+  // uploadProvider's ALLOWED_CONTENT_TYPES, which both client-upload routes
+  // derive from, and the generator/design paths that hard-code image/png.
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "*.public.blob.vercel-storage.com",
+        pathname: "/**",
+        search: "",
+      },
+    ],
+    // Next's default is ['image/webp'] alone. AVIF first, WebP as the
+    // fallback for browsers without it, original format if neither matches.
+    formats: ["image/avif", "image/webp"],
+    // Blobs are treated as immutable here (new pathname per upload rather
+    // than overwrite), so a long TTL costs nothing in staleness.
+    minimumCacheTTL: 2678400, // 31 days
+  },
+
   experimental: {
     // Beta 1 bug, confirmed via real production logs (2026-08-06): every
     // chat photo/document upload was hitting Next's default 1MB Server

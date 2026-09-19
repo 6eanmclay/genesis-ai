@@ -1,3 +1,4 @@
+import { StoreImage } from "./StoreImage";
 import { resolveSectionOrder, type SectionKey } from "@/lib/storefrontSections";
 import { prisma } from "@/lib/prisma";
 import { isPaymentConnected } from "@/lib/dashboard/needsAttention";
@@ -106,9 +107,15 @@ export { resolveSectionOrder, type SectionKey };
 export function ProductImage({
   product,
   className,
+  // What this image occupies at each breakpoint, so the optimizer serves a
+  // variant sized for the slot instead of the 1024x1024 original. Every
+  // caller passes its own; the default is the safe (largest) answer for a
+  // caller that has not been told its own layout yet.
+  sizes = "100vw",
 }: {
   product: StoreProduct;
   className?: string;
+  sizes?: string;
 }) {
   if (!product.imageUrl) {
     return (
@@ -118,11 +125,21 @@ export function ProductImage({
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={product.imageUrl}
-      alt={product.name}
-      className={className ?? "h-full w-full object-cover"}
-    />
+    // THE POSITIONING CONTEXT LIVES HERE, NOT IN THE CALLERS. `fill` needs a
+    // positioned ancestor, and the three callers' wrappers (all
+    // `aspect-square w-full overflow-hidden`) are not positioned. Adding
+    // `relative` to each of them would work but spreads a requirement of this
+    // component across three call sites that would then silently break the
+    // image if one were ever copied without it. This span fills the existing
+    // wrapper exactly, so the rendered box is unchanged either way.
+    <span className="relative block h-full w-full">
+      <StoreImage
+        src={product.imageUrl}
+        alt={product.name}
+        fill
+        sizes={sizes}
+        className={className ?? "h-full w-full object-cover"}
+      />
+    </span>
   );
 }
