@@ -24,6 +24,7 @@ import {
 import type { CreativeDirectionOption, DiscoveryState, DiscoveryStep } from "@/lib/onboarding/types";
 import type { FulfillmentCandidate } from "@/lib/fulfillment/types";
 import type { PriceRecommendation } from "@/lib/onboarding/pricing";
+import { StoreImage } from "@/components/StoreImage";
 
 // The Genesis Experience — Business act. Real implementation of the
 // confirmed mockup (see GENESIS_EXPERIENCE.md's "The reference screen" and
@@ -638,15 +639,13 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
                     className="w-[min(26vw,170px)] aspect-square rounded-[20px] overflow-hidden"
                     style={{ boxShadow: "0 20px 50px rgba(0,0,0,.5), 0 0 0 1px " + GENESIS_ATMOSPHERE.border }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
-                    <img src={direction.productImageUrl} alt={direction.name} className="h-full w-full object-cover" />
+                    <StoreImage src={direction.productImageUrl} alt={direction.name} width={170} height={170} className="h-full w-full object-cover" />
                   </div>
                   <div
                     className="absolute -bottom-2 -right-2 h-9 w-9 overflow-hidden rounded-full border-2"
                     style={{ borderColor: GENESIS_ATMOSPHERE.bg, backgroundColor: GENESIS_ATMOSPHERE.bgElevated }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
-                    <img src={direction.logoUrl} alt={`${direction.name} logo`} className="h-full w-full object-cover" />
+                    <StoreImage src={direction.logoUrl} alt={`${direction.name} logo`} width={36} height={36} className="h-full w-full object-cover" />
                   </div>
                 </div>
                 <p className="text-sm font-semibold" style={{ color: GENESIS_ATMOSPHERE.text }}>
@@ -755,8 +754,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
             style={{ boxShadow: "0 30px 80px rgba(0,0,0,.55), 0 0 0 1px " + GENESIS_ATMOSPHERE.border }}
           >
             {candidate.imageUrl && (
-              // eslint-disable-next-line @next/next/no-img-element -- an external, provider-hosted catalog image, not a local/optimizable asset
-              <img src={candidate.imageUrl} alt={candidate.name} className="h-full w-full object-cover" />
+              <StoreImage src={candidate.imageUrl} alt={candidate.name} width={300} height={300} className="h-full w-full object-cover" />
             )}
           </div>
           <p className="max-w-sm text-base font-semibold" style={{ color: GENESIS_ATMOSPHERE.text }}>
@@ -786,8 +784,7 @@ export function BusinessScreen({ initialState }: { initialState: DiscoveryState 
                 className="w-[min(40vw,150px)] aspect-square rounded-[16px] overflow-hidden"
                 style={{ boxShadow: "0 20px 50px rgba(0,0,0,.5), 0 0 0 1px " + GENESIS_ATMOSPHERE.border }}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
-                <img src={chosenDirection.productImageUrl} alt={chosenDirection.name} className="h-full w-full object-cover" />
+                <StoreImage src={chosenDirection.productImageUrl} alt={chosenDirection.name} width={150} height={150} className="h-full w-full object-cover" />
               </div>
               <p className="text-sm font-semibold" style={{ color: GENESIS_ATMOSPHERE.text }}>
                 {chosenDirection.name}

@@ -1,4 +1,5 @@
 import { themeCssVars, heroLayoutOf, type Theme } from "@/lib/theme";
+import { StoreImage } from "@/components/StoreImage";
 
 // A compact, non-interactive rendering of a store's hero section — reuses
 // the store's real theme tokens (colors, fonts, hero layout) so a
@@ -44,8 +45,17 @@ export function HeroMock({
             </span>
           </div>
           <div className="aspect-square w-full overflow-hidden rounded-lg bg-[var(--brand-text)]/5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={productImage ?? undefined} alt="" className="h-full w-full object-cover" />
+            {/* Mixed source, same as EntityCarousel: this is Product.imageUrl,
+                which may be a supplier URL on an adopted product. */}
+            {productImage ? (
+              <StoreImage
+                src={productImage}
+                alt=""
+                width={400}
+                height={400}
+                className="h-full w-full object-cover"
+              />
+            ) : null}
           </div>
         </div>
       ) : (

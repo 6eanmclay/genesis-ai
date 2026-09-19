@@ -6,6 +6,7 @@ import { ANONYMOUS_CUSTOMER_LABEL, type Certainty } from "@/lib/businessModel/bu
 import type { MapEntity } from "@/lib/businessModel/mapEntities";
 import { useJ4Ask } from "./J4AskContext";
 import type { DomainDestination } from "./BusinessMapCanvas";
+import { StoreImage } from "@/components/StoreImage";
 
 // THE SECOND LAYER OF THE MAP: WHAT J4 KNOWS ABOUT ONE THING.
 //
@@ -115,10 +116,18 @@ function Card({
     >
       {/* ---- the thing itself, where there is a picture of it -------------- */}
       {showImage ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        // A MIXED SOURCE: entity.image is either an asset storageUrl (ours)
+        // or a Product.imageUrl, which lib/sourcing/adopt.ts may have copied
+        // off a supplier API. StoreImage decides per URL, so this call site
+        // needs no ownership logic of its own.
+        //
+        // onError is forwarded deliberately — it is what hides a tile whose
+        // image will not load, and a supplier URL is exactly what 404s.
+        <StoreImage
           src={entity.image!}
           alt=""
+          width={320}
+          height={320}
           onError={() => setBroken(true)}
           className="h-32 w-full shrink-0 border-b border-black/[.06] object-cover sm:h-auto sm:w-[10rem] sm:self-stretch sm:border-b-0 sm:border-r dark:border-white/[.08]"
         />

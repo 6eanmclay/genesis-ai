@@ -12,6 +12,7 @@ import {
 } from "@/lib/theme";
 import type { Theme } from "@/lib/theme";
 import type { ExperienceConcept } from "@/lib/onboarding/types";
+import { StoreImage } from "@/components/StoreImage";
 
 // Experience-First Onboarding, Milestone 3 — the real storefront preview.
 // Deliberately NOT a mockup and NOT a variant of RevealPanel's Genesis-
@@ -63,8 +64,9 @@ export function StorefrontPreview({ concept }: { concept: ExperienceConcept }) {
 
       <nav className="flex items-center justify-center gap-2 border-b border-[var(--brand-text)]/[.08] px-8 py-4">
         <div className="h-7 w-7 shrink-0 overflow-hidden rounded-full">
-          {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
-          <img src={direction.logoUrl} alt="" className="h-full w-full object-cover" />
+          {/* A 28px mark. The old note called this "provider-hosted, not
+              optimizable" - it is Blob, and StoreImage decides either way. */}
+          <StoreImage src={direction.logoUrl} alt="" width={28} height={28} className="h-full w-full object-cover" />
         </div>
         <span className="font-[family-name:var(--font-heading)] text-sm font-semibold">{direction.name}</span>
       </nav>
@@ -76,8 +78,8 @@ export function StorefrontPreview({ concept }: { concept: ExperienceConcept }) {
 
       <section className="mx-auto max-w-md px-8 py-14 text-center">
         <div className={`aspect-square w-full overflow-hidden ${imageFrame} ${shadow}`}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- a freshly generated, provider-hosted image, not a local/optimizable asset */}
-          <img src={direction.productImageUrl} alt={concept.productName} className="h-full w-full object-cover" />
+          {/* aspect-square inside a max-w-md column, so 448 is its ceiling. */}
+          <StoreImage src={direction.productImageUrl} alt={concept.productName} width={448} height={448} className="h-full w-full object-cover" />
         </div>
         <p className="mt-5 text-base font-semibold">{concept.productName}</p>
         <p className="mt-1 text-2xl font-semibold" style={{ color: direction.colors.accent }}>

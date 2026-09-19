@@ -1,6 +1,7 @@
 import { PERMISSIONS, requireBusinessPageOrActive } from "@/lib/permissions";
 import { declaredRead } from "@/lib/businessModel/declaredReads";
 import { LEGACY_BUSINESS_BASE } from "@/lib/dashboard/navConfig";
+import { StoreImage } from "@/components/StoreImage";
 import { prisma } from "@/lib/prisma";
 import { currentAssetsByRole } from "@/lib/businessModel/assets";
 import { AssetSchema } from "@/lib/businessModel/entities";
@@ -371,8 +372,15 @@ export async function StudioScreen({ slug }: { slug?: string; basePath: string }
                   key={role}
                   className="flex items-center gap-3 rounded-xl border border-black/[.07] bg-white p-2.5 pr-4 dark:border-white/[.09] dark:bg-white/[.04]"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={asset.url} alt={role} className="h-11 w-11 rounded-lg bg-white object-contain" />
+                  {/* A 44px chip. h-11 w-11 with no border, so the content box
+                      is the full 44. */}
+                  <StoreImage
+                    src={asset.url}
+                    alt={role}
+                    width={44}
+                    height={44}
+                    className="h-11 w-11 rounded-lg bg-white object-contain"
+                  />
                   <div className="min-w-0">
                     <p className="text-[14px] font-medium">{role === "brand.logo" ? "Your logo" : role}</p>
                     <p className="text-[12px] text-zinc-500">{asset.origin === "generated" ? "Made with J4" : "Yours"}</p>
@@ -407,8 +415,16 @@ export async function StudioScreen({ slug }: { slug?: string; basePath: string }
                           className="w-[68px] overflow-hidden rounded-lg border border-black/[.07] bg-white dark:border-white/[.09] dark:bg-white/[.04]"
                           title={`${asset.summary ?? asset.originalFilename}${asset.role ? ` (${asset.role})` : ""}`}
                         >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={asset.storageUrl} alt={asset.summary ?? asset.originalFilename} className="aspect-square w-full bg-white object-contain" />
+                          {/* 66, NOT 68. The figure is w-[68px] WITH a border,
+                              and under border-box that 1px each side leaves a
+                              66px content box for the image to fill. */}
+                          <StoreImage
+                            src={asset.storageUrl}
+                            alt={asset.summary ?? asset.originalFilename}
+                            width={66}
+                            height={66}
+                            className="aspect-square w-full bg-white object-contain"
+                          />
                           {asset.role && (
                             <figcaption className="truncate px-1.5 py-1 text-[10px] text-zinc-500">
                               {asset.role.split(".")[1]}
@@ -441,10 +457,14 @@ export async function StudioScreen({ slug }: { slug?: string; basePath: string }
                   className="overflow-hidden rounded-xl border border-black/[.07] bg-white dark:border-white/[.09] dark:bg-white/[.04]"
                 >
                   {design.mockupUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
+                    // A fluid card in a grid. The CSS box is unchanged
+                    // (aspect-square w-full); the request is capped so a
+                    // mockup stops arriving at its full composed size.
+                    <StoreImage
                       src={design.mockupUrl}
                       alt={`${surfaceLabel(design.surface)} design`}
+                      width={320}
+                      height={320}
                       className="aspect-square w-full bg-white object-contain"
                     />
                   ) : (

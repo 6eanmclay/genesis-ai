@@ -6,6 +6,7 @@ import { mapWithConcurrency } from "@/lib/concurrency";
 import { createProduct } from "../actions";
 import { SubmitButton } from "../SubmitButton";
 import { useActionFormState } from "../useActionFormState";
+import { StoreImage } from "@/components/StoreImage";
 
 const ACCENT_BUTTON =
   "rounded-full bg-[var(--brand-accent)] text-white transition hover:opacity-90 disabled:opacity-50";
@@ -153,8 +154,8 @@ export function CreateProductForm({
           <div className="mt-1 flex flex-wrap gap-1.5">
             {imageUrls.map((url, i) => (
               <div key={url} className="relative h-16 w-16 overflow-hidden rounded-lg">
-                {/* eslint-disable-next-line @next/next/no-img-element -- Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config, same reasoning as every other Blob-sourced image in this app */}
-                <img src={url} alt="" className="h-full w-full object-cover" />
+                {/* A 64px preview in a `relative h-16 w-16` wrapper. */}
+                <StoreImage src={url} alt="" width={64} height={64} className="h-full w-full object-cover" />
                 {i === 0 && (
                   <span className="absolute left-0.5 top-0.5 rounded-full bg-black/60 px-1 py-0.5 text-[8px] font-medium text-white">
                     Primary

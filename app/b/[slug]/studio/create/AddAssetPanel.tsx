@@ -5,6 +5,7 @@ import { upload } from "@vercel/blob/client";
 import { randomAssetKey, extensionFor } from "@/lib/businessAssets/uploadKey";
 import { addAssetToLibrary, removeAssetFromLibrary } from "./actions";
 import type { LibraryAsset } from "@/lib/creation/assetLibrary";
+import { StoreImage } from "@/components/StoreImage";
 
 // ADD — THE OWNER'S CREATIVE TOOLBOX.
 //
@@ -196,8 +197,15 @@ export function AddAssetPanel({
                         : "border-black/[.10] hover:border-black/30 dark:border-white/[.14]",
                     ].join(" ")}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element -- Blob-hosted */}
-                    <img src={asset.url} alt={asset.name} className="h-full w-full object-contain" />
+                    {/* A 4-to-6 column grid of square tiles, so even the widest
+                        is a long way below the stored original. */}
+                    <StoreImage
+                      src={asset.url}
+                      alt={asset.name}
+                      width={160}
+                      height={160}
+                      className="h-full w-full object-contain"
+                    />
                     {used && (
                       <span
                         aria-hidden="true"

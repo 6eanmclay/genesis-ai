@@ -42,6 +42,7 @@ import { loadDeepKnowledge, correctBelief, type DeepKnowledge } from "./understa
 import { loadOfficeIntelligence, type OfficeIntelligence } from "./intelligence-actions";
 import type { OfficeFact } from "@/lib/j4/officeFacts";
 import { J4HandoffContext } from "@/app/dashboard/J4HandoffContext";
+import { StoreImage } from "@/components/StoreImage";
 
 // The J4 Portal, Phase A (2026-08-08) — a real, dedicated full-screen route
 // (app/j4/page.tsx), replacing the floating GenesisAssistant panel for the
@@ -2426,8 +2427,16 @@ export function J4Workspace({
                               style={{ borderColor: GENESIS_ATMOSPHERE.border }}
                               aria-label={`View photo ${idx + 1} of ${imageUrls.length} full size`}
                             >
-                              {/* eslint-disable-next-line @next/next/no-img-element -- same reasoning as the single-photo case below: Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config */}
-                              <img src={url} alt="" className="h-full w-full object-cover" />
+                              {/* A square tile in a grid, so the box is definite
+                                  and the request can be capped well below a
+                                  full-size chat photo. */}
+                              <StoreImage
+                                src={url}
+                                alt=""
+                                width={200}
+                                height={200}
+                                className="h-full w-full object-cover"
+                              />
                             </a>
                           ))}
                         </div>
@@ -2448,8 +2457,21 @@ export function J4Workspace({
                           style={{ borderColor: GENESIS_ATMOSPHERE.border }}
                           aria-label="View full-size image"
                         >
-                          {/* eslint-disable-next-line @next/next/no-img-element -- same reasoning as DashboardShell's own product-image rendering: Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config */}
-                          <img src={imageUrl} alt={m.content} className="block max-h-64 w-auto max-w-full object-cover sm:max-w-[260px]" />
+                          {/* AN IMAGE THAT SIZES ITSELF FROM ITS OWN ASPECT.
+                              `w-auto` with a capped height means the settled box
+                              comes from the photo's natural ratio, and it still
+                              does: the width/height attributes give
+                              `aspect-ratio: auto W/H`, whose `auto` keyword
+                              prefers the natural ratio once the image loads. They
+                              are here to cap what gets downloaded - a chat photo
+                              shown at 260px wide was arriving at full size. */}
+                          <StoreImage
+                            src={imageUrl}
+                            alt={m.content}
+                            width={520}
+                            height={520}
+                            className="block max-h-64 w-auto max-w-full object-cover sm:max-w-[260px]"
+                          />
                         </a>
                         <p className="mt-1 break-words text-xs" style={{ color: GENESIS_ATMOSPHERE.textSecondary }}>
                           {m.content}

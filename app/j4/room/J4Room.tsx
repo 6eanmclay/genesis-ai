@@ -32,6 +32,7 @@ import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { extractAudioUrl, extractImageUrl } from "../messageChanges";
 import { VoiceMemoButton } from "../VoiceMemoButton";
 import { J4SpeakButton } from "../J4SpeakButton";
+import { StoreImage } from "@/components/StoreImage";
 
 type Message = { id: string; role: string; content: string; changes: unknown };
 
@@ -407,8 +408,19 @@ export function J4Room({
                           style={{ borderColor: GENESIS_ATMOSPHERE.border }}
                           aria-label="View full-size image"
                         >
-                          {/* eslint-disable-next-line @next/next/no-img-element -- same reasoning as J4Workspace.tsx's identical image: Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config */}
-                          <img src={imageUrl} alt="" className="max-h-48" />
+                          {/* `w-auto` is ADDED, not incidental. It was implicit
+                              before (a bare <img> with no width rule), and stating
+                              it keeps CSS authoritative over the width now that
+                              width/height attributes exist - so the settled box
+                              stays the natural ratio capped at 192px tall, exactly
+                              as before. Same reasoning as J4Workspace above. */}
+                          <StoreImage
+                            src={imageUrl}
+                            alt=""
+                            width={384}
+                            height={384}
+                            className="max-h-48 w-auto"
+                          />
                         </a>
                         {m.content && (
                           <p className="mt-1.5 break-words text-sm text-[#f4f2fb]" data-role="content">

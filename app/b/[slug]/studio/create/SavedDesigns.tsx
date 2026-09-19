@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { SavedDesignRow } from "./actions";
 import { lastEdited } from "@/lib/creation/creationPresentation";
+import { StoreImage } from "@/components/StoreImage";
 
 // FINISH WORKING ON — the unfinished work, at the doorway.
 //
@@ -51,10 +52,13 @@ export function SavedDesigns({
                   dark theme transparent artwork is invisible. */}
               <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-lg border border-black/[.10] bg-white dark:border-white/[.14]">
                 {design.thumbnailUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- Blob-hosted
-                  <img
+                  // h-12 w-12 WITH a border, so the content box is 46; 48 is the
+                  // nearest honest request.
+                  <StoreImage
                     src={design.thumbnailUrl}
                     alt=""
+                    width={48}
+                    height={48}
                     className="h-full w-full object-contain p-1"
                   />
                 ) : (

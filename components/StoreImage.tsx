@@ -56,13 +56,40 @@ type Common = {
   className?: string;
   /** Only for the LCP image. `preload`, not the `priority` Next 16 deprecated. */
   preload?: boolean;
+  /**
+   * Forwarded verbatim to whichever element this renders (2026-09-19).
+   *
+   * Named rather than spread. A `{...rest}` would let a caller pass `src` or
+   * `width` straight through and quietly defeat the rule this component
+   * exists to enforce; these two are what the converted call sites actually
+   * use — a gallery tile that opens a lightbox, and tiles inside a
+   * drag-and-drop list that must not start a native HTML drag.
+   */
+  onClick?: React.MouseEventHandler<HTMLImageElement>;
+  draggable?: boolean;
+  /**
+   * EntityCarousel hides its tile when the image fails to load. That guard
+   * has to survive the conversion: a mixed field can hold a supplier URL
+   * that 404s, and dropping the handler would leave a broken-image icon
+   * where the component used to render nothing at all.
+   */
+  onError?: React.ReactEventHandler<HTMLImageElement>;
 };
 
 type Sized =
   | { fill: true; sizes: string; width?: never; height?: never }
   | { fill?: false; sizes?: string; width: number; height: number };
 
-export function StoreImage({ src, alt, className, preload, ...size }: Common & Sized) {
+export function StoreImage({
+  src,
+  alt,
+  className,
+  preload,
+  onClick,
+  draggable,
+  onError,
+  ...size
+}: Common & Sized) {
   if (!isOptimizableImageSrc(src)) {
     // THE ORIGINAL ELEMENT, UNCHANGED. Same tag, same classes, same box as
     // before any of this — which is the point: a host we do not control must
@@ -75,13 +102,28 @@ export function StoreImage({ src, alt, className, preload, ...size }: Common & S
         src={src}
         alt={alt}
         className={className}
+        onClick={onClick}
+        draggable={draggable}
+        onError={onError}
         {...(size.fill ? {} : { width: size.width, height: size.height })}
       />
     );
   }
 
   if (size.fill) {
-    return <Image src={src} alt={alt} fill sizes={size.sizes} preload={preload} className={className} />;
+    return (
+      <Image
+        src={src}
+        alt={alt}
+        fill
+        sizes={size.sizes}
+        preload={preload}
+        className={className}
+        onClick={onClick}
+        draggable={draggable}
+        onError={onError}
+      />
+    );
   }
   return (
     <Image
@@ -91,6 +133,9 @@ export function StoreImage({ src, alt, className, preload, ...size }: Common & S
       height={size.height}
       preload={preload}
       className={className}
+      onClick={onClick}
+      draggable={draggable}
+      onError={onError}
     />
   );
 }

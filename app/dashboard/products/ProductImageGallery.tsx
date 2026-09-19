@@ -46,6 +46,7 @@ import { SortableContext, useSortable, arrayMove, rectSortingStrategy, sortableK
 import { CSS } from "@dnd-kit/utilities";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { addProductImages, reorderProductImages, deleteProductImage, replaceProductImage } from "../actions";
+import { StoreImage } from "@/components/StoreImage";
 import { ImageLightbox } from "../ImageLightbox";
 
 const MAX_IMAGES = 10;
@@ -120,8 +121,17 @@ function SortableThumbnail({
       }}
       className="relative h-20 w-20 shrink-0 touch-none overflow-hidden rounded-lg bg-black/[.03] dark:bg-white/[.05]"
     >
-      {/* eslint-disable-next-line @next/next/no-img-element -- Vercel Blob is an arbitrary per-deployment host next/image can't optimize without ongoing config, same reasoning as every other Blob-sourced image in this app */}
-      <img src={image.url} alt="" onClick={onOpen} className="h-full w-full object-cover" draggable={false} />
+      {/* An 80px tile in a `relative h-20 w-20` wrapper, so the optimizer is
+          asked for 80 rather than the 1024x1024 original. */}
+      <StoreImage
+        src={image.url}
+        alt=""
+        width={80}
+        height={80}
+        onClick={onOpen}
+        className="h-full w-full object-cover"
+        draggable={false}
+      />
       {isPrimary && (
         <span className="pointer-events-none absolute left-1 top-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[9px] font-medium text-white">
           Primary
@@ -362,10 +372,13 @@ export function ProductImageGallery({
               dragged image must visibly move" affordance. */}
           <DragOverlay>
             {draggingImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              // The same 80px box. `ring` is a box-shadow, so it does not
+              // shrink the content box the way a border would.
+              <StoreImage
                 src={draggingImage.url}
                 alt=""
+                width={80}
+                height={80}
                 className="h-20 w-20 rounded-lg object-cover opacity-90 shadow-xl ring-2 ring-[var(--brand-accent,#2563eb)]"
               />
             ) : null}

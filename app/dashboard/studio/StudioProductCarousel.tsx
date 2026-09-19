@@ -16,6 +16,7 @@ import { CreatableArt } from "@/app/b/[slug]/studio/create/CreatableArt";
 import { CreationStage, StageDots } from "@/app/b/[slug]/studio/create/CreationStage";
 import { StageFrame } from "./StageFrame";
 import { GENESIS_GREEN } from "@/lib/brand/palette";
+import { StoreImage } from "@/components/StoreImage";
 
 // PRODUCT CREATION — the immersive carousel, in a section.
 //
@@ -216,8 +217,15 @@ function SavedGroup({
                   and transparent artwork is invisible on a dark theme. */}
               <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg border border-black/[.10] bg-white dark:border-white/[.14]">
                 {design.thumbnailUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- Blob-hosted
-                  <img src={design.thumbnailUrl} alt="" className="h-full w-full object-contain p-1" />
+                  // The span is h-11 w-11 WITH a border, so the image fills a
+                  // 42px content box; 44 is the nearest honest request.
+                  <StoreImage
+                    src={design.thumbnailUrl}
+                    alt=""
+                    width={44}
+                    height={44}
+                    className="h-full w-full object-contain p-1"
+                  />
                 ) : (
                   <span className="text-[10px] text-zinc-400">empty</span>
                 )}
