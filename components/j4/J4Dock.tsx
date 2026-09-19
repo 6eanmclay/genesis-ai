@@ -197,21 +197,25 @@ export function J4Dock({
         // chrome instead of 32 and gives the difference to the artwork. Above
         // lg there is no bar to compete with and the original insets stay, so
         // J4 does not move or resize on a desktop that never had this problem.
-        className="pointer-events-auto px-1 pb-1.5 pt-1 lg:px-3 lg:pb-3 lg:pt-2"
+        className="pointer-events-auto px-1 pb-8 pt-1 lg:px-3 lg:pb-3 lg:pt-2"
       >
         <div
           data-testid="j4-corner"
           className="relative rounded-[1.75rem] p-0.5 lg:p-1"
         >
-          {/* THE ARTWORK'S OWN BOX, and the reason it exists (2026-09-09).
-              The Office doorway is positioned absolutely, and it used to be
-              positioned against j4-corner - which also contains the Expand
-              control BELOW the artwork. Trimming the dock's padding to make J4
-              larger brought the doorway down onto the first letters of
-              "Expand", and Sean saw "P-A-N-D" in production: not a stray
-              string, a covered control.
-              So the doorway now belongs to J4's square, which is what its
-              "inside the same square" comment always meant. */}
+          {/* THE ARTWORK'S OWN BOX. It once existed to contain the Office
+              doorway as well: the doorway was absolutely positioned, and when
+              it was positioned against j4-corner - which also holds Expand
+              BELOW the artwork - trimming the dock's padding brought it down
+              onto the first letters of "Expand", and Sean saw "P-A-N-D" in
+              production. Not a stray string, a covered control.
+
+              The Office left this box entirely on 2026-09-19 and is a sibling
+              below it now, so nothing is positioned over J4 any more. The box
+              stays because it is still J4's own square, and because the
+              lesson it records - an absolutely positioned control drifts onto
+              whatever is beneath it - is why the replacement is laid out in
+              flow instead. */}
           <div className="relative">
           <button
             type="button"
@@ -239,44 +243,63 @@ export function J4Dock({
           </button>
 
 
-          {/* ---- LAYER 2: THE OFFICE, inside the same square ---------
+          </div>
 
-              Sean's mockup, exactly: one corner container, J4 filling it,
-              and the minimised Office occupying the bottom-left portion of
-              that SAME square. Not on top of his face, not underneath him,
-              not across the screen - a second small surface attached to the
-              dock, which is what a minimised application looks like.
+          {/* ---- THE OFFICE, BENEATH J4 RATHER THAN ON HIM -------------
 
-              Its own button, so its hit target is genuinely separate: J4
-              takes the taps everywhere else in the square. */}
+              REVERSES THE 2026-09-04 PLACEMENT, and deliberately. That
+              direction was "a door in the wall of his room": one corner
+              container, J4 filling it, and the Office a small doorway set
+              into the lower-left of his SAME square. It is recorded here
+              because it was a real decision, not an accident.
+
+              What it produced on a phone (Sean, 2026-09-19): "the current
+              Office launcher is physically sitting on top of the large J4
+              presence, creating two competing J4 visuals in the same space."
+              A doorway drawn ON the character reads as a second J4 card
+              stacked on the first, not as a door.
+
+              So the hierarchy is now VERTICAL rather than nested:
+
+                  J4  ->  small Office control  ->  five-room navigation
+
+              J4 keeps his exact size and corner - the standing decision, and
+              untouched here. The Office moves out from on top of him into the
+              strip directly beneath him, and carries no J4 artwork of its own:
+              an icon and the word, which is what makes it a control rather
+              than a competing portrait.
+
+              FULL WIDTH, NOT A SQUARE. The reserve is 92px of usable width
+              once the dock's own chrome is paid for, so a 92x36 control has
+              more tap area than the 46x42 doorway it replaces while being
+              visually much quieter - it reads as a strip, not a card. */}
           <button
             type="button"
             data-testid="j4-office"
             onClick={onOpenOffice}
-            aria-label="Office \u2014 the work you and J4 have done together"
-            className="group absolute bottom-1.5 left-1.5 z-10 flex h-[2.6rem] w-[2.9rem] flex-col items-center justify-center gap-0.5 rounded-xl border border-[#4ade3a]/30 bg-[#050a08]/92 transition-colors hover:border-[#4ade3a]/60"
+            aria-label="Office — the work you and J4 have done together"
+            className="group mt-1 flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-[#4ade3a]/30 bg-[#050a08]/92 transition-colors hover:border-[#4ade3a]/60"
           >
             <svg
               viewBox="0 0 24 24"
-              width="15"
-              height="15"
+              width="14"
+              height="14"
               fill="none"
               stroke="currentColor"
               strokeWidth={1.6}
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="text-[#4ade3a]/80 transition-colors group-hover:text-[#4ade3a]"
+              className="shrink-0 text-[#4ade3a]/80 transition-colors group-hover:text-[#4ade3a]"
               aria-hidden="true"
             >
               <path d="M7 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16" />
               <path d="M4 21h16" />
               <circle cx="14" cy="13" r="0.9" fill="currentColor" stroke="none" />
             </svg>
-            <span className="text-[8px] font-medium leading-none text-white/60 transition-colors group-hover:text-white/90">
+            <span className="text-[11px] font-medium leading-none text-white/70 transition-colors group-hover:text-white/95">
               Office
             </span>
           </button>
-          </div>
 
           {/* NO MICROPHONE BUTTON (2026-09-04, Sean).
 

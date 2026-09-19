@@ -197,6 +197,11 @@ async function measure(page: Page) {
       corner: rects[2],
       office: rects[3],
       ground: rects[4],
+      // Sean, 2026-09-19: "Do not repeat the J4 artwork inside the Office
+      // launcher." An <img> in there is the launcher becoming a second
+      // portrait, which is the whole complaint this slice answers. An inline
+      // <svg> icon is not an image by this measure and is what it should use.
+      officeImages: officeEl ? officeEl.querySelectorAll("img").length : -1,
       // HOW SOLID THE GROUND REALLY IS, read off the browser rather than off
       // the class list: bg-white/95 is a claim until something measures it.
       groundBg: groundEl ? getComputedStyle(groundEl).backgroundColor : "(no element)",
@@ -369,9 +374,13 @@ async function main(): Promise<void> {
       const covered: string[] = [];
       for (const a of m.dockControls) {
         for (const b of m.dockControls) {
-          if (a.id === b.id || a.id === "j4-open") continue;
-          // j4-open is J4 himself and legitimately contains the others.
-          if (b.id === "j4-open") continue;
+          if (a.id === b.id) continue;
+          // THE j4-open EXEMPTION IS GONE (2026-09-19). It used to read "j4-open
+          // is J4 himself and legitimately contains the others", which was true
+          // while the Office was a doorway inside his square. Nothing is
+          // positioned over J4 any more, so nothing needs excusing - and
+          // leaving the exemption in would have let the old overlap creep back
+          // without a single assertion noticing.
           if (overlaps(a, b)) covered.push(`${a.id} over ${b.id}`);
         }
       }
@@ -423,9 +432,82 @@ async function main(): Promise<void> {
       // ---- Office belongs to J4, not to the navigation ---------------------
       check(`${width}: no room is called Office`,
         !m.items.some((i) => /office/i.test(i.label)), m.items.map((i) => i.label).join(" | "));
-      check(`${width}: the Office doorway is inside J4's square`,
+      // ---- THE OFFICE IS BENEATH J4 NOW, NOT ON HIM -----------------------
+      //
+      // REVERSED, NOT DELETED (2026-09-19). This read "the Office doorway is
+      // inside J4's square" and was right about the design of its day: the
+      // Office was a small door set into the lower-left of J4's own artwork.
+      // On a phone that read as two competing J4 visuals stacked in one space
+      // — Sean: "the current Office launcher is physically sitting on top of
+      // the large J4 presence" — so the Office moved out from on top of him.
+      // The check that guarded the old placement now guards the new one.
+      // The artwork is the reserve minus the dock's own chrome: px-1 on the
+      // dock (8) plus p-0.5 on the corner (4). Pinning the absolute number
+      // means a chrome change shows up here rather than silently resizing J4,
+      // which is the thing Sean asked to keep fixed.
+      const expectedArtwork = reserveAt(width) - 12;
+      const artwork = m.dockControls.find((c) => c.id === "j4-open");
+      const officeCtl = m.dockControls.find((c) => c.id === "j4-office");
+      const expandCtl = m.dockControls.find((c) => c.id === "j4-expand");
+
+      check(`${width}: the Office does not sit on J4's artwork`,
+        !!(artwork && officeCtl) && !overlaps(artwork, officeCtl),
+        artwork && officeCtl
+          ? `J4 ${artwork.y}..${artwork.y + artwork.h}, Office ${officeCtl.y}..${officeCtl.y + officeCtl.h}`
+          : "a control is missing");
+
+      check(`${width}: and it sits BELOW him, which is the stated hierarchy`,
+        !!(artwork && officeCtl) && officeCtl.y >= artwork.y + artwork.h,
+        artwork && officeCtl ? `J4 ends ${artwork.y + artwork.h}, Office starts ${officeCtl.y}` : "a control is missing");
+
+      check(`${width}: the Office is still J4's, not a sixth room`,
         !!(m.office && m.corner && overlaps(m.office, m.corner)),
         m.office ? `office x=${m.office.x} corner x=${m.corner?.x}` : "no office control found");
+
+      // It is a CONTROL, not a second portrait.
+      check(`${width}: the Office launcher repeats no J4 artwork`,
+        m.officeImages === 0, `${m.officeImages} <img> inside the Office control`);
+      check(`${width}: and it still says what it is`,
+        (officeCtl?.text ?? "").toLowerCase().includes("office"), `"${officeCtl?.text}"`);
+
+      // ---- both dock controls remain genuinely tappable --------------------
+      //
+      // AREA, NOT THE 44px SQUARE. Both are wide-and-short by design, so the
+      // guideline's square does not describe them; what matters is that the
+      // finger has somewhere to land. The Office clears 44x44-equivalent
+      // comfortably - 92x36 is a bigger target than the 46x42 doorway it
+      // replaced, so this move improved reachability rather than trading it.
+      check(`${width}: the Office is a real tap target`,
+        !!officeCtl && officeCtl.w * officeCtl.h >= MIN_TAP_TARGET_PX * MIN_TAP_TARGET_PX && officeCtl.h >= 16,
+        officeCtl ? `${officeCtl.w}x${officeCtl.h} = ${officeCtl.w * officeCtl.h}px2` : "missing");
+
+      // EXPAND IS ASSERTED AGAINST WHAT IT HAS ALWAYS BEEN, deliberately.
+      //
+      // Measured at 92x21 = 1932px2, which is four square pixels under
+      // 44x44-equivalent. That shortfall is PRE-EXISTING: Expand's classes
+      // (`px-2 py-0.5 text-[11px]`) are untouched by this slice, and the
+      // direction was to preserve the existing Expand affordance.
+      //
+      // So this does not pretend 1932 clears a bar it does not clear, and it
+      // does not quietly lower the bar to make a green line either. It asserts
+      // the invariant that actually belongs to THIS change - Expand is still
+      // full width, still its own size, and still not covered by anything -
+      // and the shortfall is reported to Sean as a separate question rather
+      // than hidden inside a passing test.
+      check(`${width}: Expand is unobstructed and no smaller than it has been`,
+        !!expandCtl && expandCtl.h >= 20 && expandCtl.w === expectedArtwork,
+        expandCtl ? `${expandCtl.w}x${expandCtl.h} = ${expandCtl.w * expandCtl.h}px2 (under 44x44-equivalent, pre-existing)` : "missing");
+
+      // ---- J4 himself did not move or resize ------------------------------
+      //
+      // The standing decision Sean restated: "Do not shrink, move, or replace
+      // the main J4. Its current size and bottom-left position remain."
+      check(`${width}: J4 is still anchored to the bottom-left corner`,
+        !!(m.dock && m.dock.x === 0 && Math.abs(m.dock.y + m.dock.h - 844) <= 1),
+        m.dock ? `dock x=${m.dock.x} bottom=${m.dock.y + m.dock.h}` : "no dock");
+      check(`${width}: J4's artwork is the size it was before the Office moved`,
+        !!artwork && artwork.w === expectedArtwork,
+        `${artwork?.w}px, expected ${expectedArtwork}px`);
 
       // ---- and the arithmetic agrees with the geometry --------------------
       const fit = roomsFitAt(width);

@@ -126,8 +126,19 @@ export const J4_DOCK_OCCUPIED = `var(${J4_DOCK_OCCUPIED_VAR})`;
  * — the same reasoning the desktop reserve step records above.
  */
 export const J4_DOCK_OCCUPIED_AT: ReadonlyArray<{ minWidth: number; occupied: number }> = [
-  { minWidth: 0, occupied: 129 },
-  { minWidth: 390, occupied: 141 },
+  // 195/207 since 2026-09-19, up from 129/141. Two things grew it, and both
+  // were asked for: the Office left J4's square for a 36px strip beneath him,
+  // and the dock's bottom inset went from 6px to 32px to lift both controls
+  // clear of the bottom-left corner — where the phone's own gesture strip
+  // lives, and where Next's dev error overlay renders and was intercepting
+  // taps on the Office in the harness.
+  //
+  // THIS IS A REAL COST: 207 of 844px at 390 is a quarter of the screen
+  // reserved. It is reserved honestly — <main> pads by exactly this, so no
+  // content hides behind him — but it is the trade-off of unstacking the
+  // Office from J4 rather than a free win.
+  { minWidth: 0, occupied: 195 },
+  { minWidth: 390, occupied: 207 },
 ];
 
 /** How tall J4's box is at a given viewport width. */
