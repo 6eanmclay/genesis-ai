@@ -448,7 +448,6 @@ async function main(): Promise<void> {
       const expectedArtwork = reserveAt(width) - 12;
       const artwork = m.dockControls.find((c) => c.id === "j4-open");
       const officeCtl = m.dockControls.find((c) => c.id === "j4-office");
-      const expandCtl = m.dockControls.find((c) => c.id === "j4-expand");
 
       check(`${width}: the Office does not sit on J4's artwork`,
         !!(artwork && officeCtl) && !overlaps(artwork, officeCtl),
@@ -481,22 +480,30 @@ async function main(): Promise<void> {
         !!officeCtl && officeCtl.w * officeCtl.h >= MIN_TAP_TARGET_PX * MIN_TAP_TARGET_PX && officeCtl.h >= 16,
         officeCtl ? `${officeCtl.w}x${officeCtl.h} = ${officeCtl.w * officeCtl.h}px2` : "missing");
 
-      // EXPAND IS ASSERTED AGAINST WHAT IT HAS ALWAYS BEEN, deliberately.
+      // ---- AND THE DOCK IS EXACTLY J4 -> OFFICE -> ROOMS ------------------
       //
-      // Measured at 92x21 = 1932px2, which is four square pixels under
-      // 44x44-equivalent. That shortfall is PRE-EXISTING: Expand's classes
-      // (`px-2 py-0.5 text-[11px]`) are untouched by this slice, and the
-      // direction was to preserve the existing Expand affordance.
-      //
-      // So this does not pretend 1932 clears a bar it does not clear, and it
-      // does not quietly lower the bar to make a green line either. It asserts
-      // the invariant that actually belongs to THIS change - Expand is still
-      // full width, still its own size, and still not covered by anything -
-      // and the shortfall is reported to Sean as a separate question rather
-      // than hidden inside a passing test.
-      check(`${width}: Expand is unobstructed and no smaller than it has been`,
-        !!expandCtl && expandCtl.h >= 20 && expandCtl.w === expectedArtwork,
-        expandCtl ? `${expandCtl.w}x${expandCtl.h} = ${expandCtl.w * expandCtl.h}px2 (under 44x44-equivalent, pre-existing)` : "missing");
+      // The Expand row was removed on 2026-09-19 ("we don't need that control
+      // there anymore") and the space given to the Office, so the dock now
+      // holds two controls, not three. Asserted as a shape rather than as an
+      // absence: a future row added under J4 fails here, which is what the
+      // old "nothing covers anything" check could not tell you on its own.
+      const dockIds = m.dockControls.map((c) => c.id).sort().join(",");
+      check(`${width}: the dock holds J4 and the Office, and nothing else`,
+        dockIds === "j4-office,j4-open", dockIds || "(none)");
+      check(`${width}: there is no Expand row under J4 any more`,
+        !m.dockControls.some((c) => c.id === "j4-expand"),
+        m.dockControls.map((c) => c.id).join(" | "));
+
+      // THE STACK, TOP TO BOTTOM. J4's artwork, then the Office, then the bar
+      // the five rooms sit in — the composition Sean asked for, stated as an
+      // ordering so it cannot be satisfied by three controls in a heap.
+      check(`${width}: J4 sits above the Office, which sits above the rooms`,
+        !!(artwork && officeCtl && m.nav) &&
+          artwork.y + artwork.h <= officeCtl.y &&
+          officeCtl.y + officeCtl.h <= m.nav.y + m.nav.h,
+        artwork && officeCtl && m.nav
+          ? `J4 ends ${artwork.y + artwork.h}, Office ${officeCtl.y}..${officeCtl.y + officeCtl.h}, bar ends ${m.nav.y + m.nav.h}`
+          : "a box is missing");
 
       // ---- J4 himself did not move or resize ------------------------------
       //

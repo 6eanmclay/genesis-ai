@@ -46,11 +46,11 @@
   /* 169/181 since 2026-09-19: the Office left J4's square and became a
      36px strip beneath him, so the dock is taller by exactly that strip.
      Measured, then declared - verify-mobile-nav-layout compares the two. */
-  --j4-dock-occupied: 195px;
+  --j4-dock-occupied: 172px;
 }
 
 @media (min-width: 390px) {
-  :root { --j4-dock-reserve: 116px; --j4-dock-occupied: 207px; }
+  :root { --j4-dock-reserve: 116px; --j4-dock-occupied: 184px; }
 }
 
 /* Desktop keeps him exactly the size he already was.

@@ -126,19 +126,31 @@ export const J4_DOCK_OCCUPIED = `var(${J4_DOCK_OCCUPIED_VAR})`;
  * — the same reasoning the desktop reserve step records above.
  */
 export const J4_DOCK_OCCUPIED_AT: ReadonlyArray<{ minWidth: number; occupied: number }> = [
-  // 195/207 since 2026-09-19, up from 129/141. Two things grew it, and both
-  // were asked for: the Office left J4's square for a 36px strip beneath him,
-  // and the dock's bottom inset went from 6px to 32px to lift both controls
-  // clear of the bottom-left corner — where the phone's own gesture strip
-  // lives, and where Next's dev error overlay renders and was intercepting
-  // taps on the Office in the harness.
+  // 172/184 since 2026-09-19, up from 129/141. The dock is now exactly J4
+  // and one Office strip: the Office left J4's square (+36), the Expand row
+  // was removed at Sean's instruction (-23), and the bottom inset went 6px
+  // -> 32px (pb-8 in J4Dock).
   //
-  // THIS IS A REAL COST: 207 of 844px at 390 is a quarter of the screen
-  // reserved. It is reserved honestly — <main> pads by exactly this, so no
-  // content hides behind him — but it is the trade-off of unstacking the
-  // Office from J4 rather than a free win.
-  { minWidth: 0, occupied: 195 },
-  { minWidth: 390, occupied: 207 },
+  // WHAT THE 32px BUYS, MEASURED. At 390x844 the Office lands at y 774..810,
+  // leaving 34px between it and the bottom edge — clear of the iOS home
+  // indicator. At the old 6px it would sit ~800..836, eight pixels off the
+  // edge and inside that gesture strip.
+  //
+  // IT IS NOT THERE TO DODGE THE DEV ERROR OVERLAY, whatever an earlier
+  // commit message in this slice claimed. The inset was first added for that
+  // reason and it does not even achieve it — verify-office-browser is red
+  // with the padding and without it, because Next's overlay intercepts the
+  // tap either way. That interception is a dev-only artifact of the
+  // J4Overlay.tsx:172 hydration mismatch, it is its own investigation, and it
+  // has no bearing on this geometry. Sean: "The dev overlay must not dictate
+  // production geometry."
+  //
+  // RECALCULATED FROM THE REAL BOX, not carried over. An earlier pass in
+  // this same slice declared 195/207 and the suite caught it the moment the
+  // Expand row went — which is exactly why the height is declared rather
+  // than assumed.
+  { minWidth: 0, occupied: 172 },
+  { minWidth: 390, occupied: 184 },
 ];
 
 /** How tall J4's box is at a given viewport width. */

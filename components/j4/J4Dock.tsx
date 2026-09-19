@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { J4Character, type J4State } from "./J4Character";
 import { useJ4State } from "./useJ4State";
 import type { TalkState } from "@/app/dashboard/useJ4Talk";
@@ -89,13 +88,11 @@ export function J4Dock({
   // talking to him, the microphone is the truer account of what he is doing
   // than anything inferred from a text composer.
   const state = talkState === "off" ? activityState : (talkState as typeof activityState);
-  const [expanded, setExpanded] = useState(false);
   const label = STATE_LABEL[state];
 
   return (
     <div
       data-testid="j4-dock"
-      data-j4-expanded={expanded ? "true" : "false"}
       // EVERY WIDTH NOW. He used to be desktop-only because the mobile bar
       // had its own centre orb; that orb is gone, and one J4 identity
       // throughout the application means he cannot be absent on a phone.
@@ -149,34 +146,6 @@ export function J4Dock({
         className="pointer-events-auto absolute inset-0 -z-10 border-r border-t border-black/[.08] bg-white/95 backdrop-blur dark:border-white/[.145] dark:bg-zinc-950/95 md:hidden"
       />
 
-      {/* ---- EXPANDED: emerges from this corner, never the centre -------- */}
-      {expanded && (
-        <div
-          data-testid="j4-expanded"
-          className="pointer-events-auto absolute bottom-[7.5rem] left-4 w-[20rem] origin-bottom-left rounded-2xl border border-[#4ade3a]/30 bg-[#0b0f0e]/95 p-4 shadow-[0_18px_50px_-12px_rgba(0,0,0,.6)] backdrop-blur"
-        >
-          <p className="text-[13px] leading-snug text-white/85">
-            {justFocused
-              ? "I've brought that up on your business map."
-              : "I'm here. Ask me about your business, or tell me what to change."}
-          </p>
-          <button
-            type="button"
-            data-testid="j4-talk"
-            onClick={onTalkToJ4}
-            className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#4ade3a] px-4 py-2 text-[13px] font-medium text-[#06210a] transition-transform hover:scale-[1.03]"
-          >
-            Talk to J4
-          </button>
-          <button
-            type="button"
-            onClick={() => setExpanded(false)}
-            className="mt-3 ml-3 text-[12px] text-white/55 underline underline-offset-2 hover:text-white/80"
-          >
-            Minimise
-          </button>
-        </div>
-      )}
 
       {/* ---- J4 HIMSELF ------------------------------------------------- */}
       {/*
@@ -221,10 +190,6 @@ export function J4Dock({
             type="button"
             data-testid="j4-open"
             onClick={onTalkToJ4}
-            // DOUBLE-TAP EXPANDS. The explicit control below stays, because
-            // a gesture nobody is told about is not an affordance - this is
-            // the shortcut for people who find it, not the only way in.
-            onDoubleClick={() => setExpanded(true)}
             aria-label={`J4 \u2014 ${label}. Open the conversation.`}
             // w-full IS LOAD-BEARING. A <button> sizes to its content even at
             // display:block, so `w-full` on J4 inside it asked for 100% of a
@@ -309,17 +274,33 @@ export function J4Dock({
               listening - there is nothing else to press.
 
               The capability did not move again; it moved INTO him. */}
-          {/* THE EXPAND CONTROL IS EXPLICIT. The direction is specific that a
-              double-tap must not be the primary discoverable interaction. */}
-          <button
-            type="button"
-            data-testid="j4-expand"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-0.5 block w-full rounded-full px-2 py-0.5 text-center text-[11px] font-medium text-[#4ade3a]/80 transition-colors hover:text-[#4ade3a]"
-          >
-            {expanded ? "Minimise" : "Expand"}
-          </button>
+
+          {/* AND NO EXPAND ROW EITHER (2026-09-19, Sean): "Remove the current
+              Expand control from underneath J4. We don't need that control
+              there anymore. Use that freed-up dock space for the Office
+              launcher instead."
+
+              So the dock is now exactly J4 -> Office -> the five rooms, and
+              the Office is the single control beneath him rather than one of
+              two stacked under him.
+
+              AND THE EXPANDED PANEL WENT WITH IT. Removing the row left the
+              panel reachable only by double-tapping J4, and the comment this
+              replaces said exactly why that is not good enough: "a gesture
+              nobody is told about is not an affordance". Sean's call: "I
+              don't want to replace a visible affordance with an undocumented
+              gesture."
+
+              CHECKED BEFORE DELETING, because a panel might have been doing
+              something of its own. It was not. Its only action, j4-talk,
+              called onTalkToJ4 - exactly what tapping J4 already does. Its
+              one unique line was prose keyed to justFocused, and that signal
+              still has a visible channel: it aims J4's gaze, just below.
+              Nothing outside this file read j4-expanded, j4-talk or the
+              data-j4-expanded marker, and shoot-j4.ts already guards on the
+              control's absence. So the panel, its state, its marker
+              attribute and the double-tap are all gone, and no capability
+              went with them. */}
         </div>
       </div>
     </div>
