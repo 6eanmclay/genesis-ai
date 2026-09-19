@@ -1,6 +1,19 @@
 import Image from "next/image";
+import { isOptimizableImageSrc } from "@/lib/images/optimizableSource";
 
-// ONE STOREFRONT IMAGE, OPTIMIZED ONLY WHEN WE OWN THE HOST (2026-09-18).
+// ONE IMAGE OF A STORE'S, OPTIMIZED ONLY WHEN WE OWN THE HOST (2026-09-18).
+//
+// ============ WHY THIS IS SHARED, AND STILL CALLED StoreImage ==========
+//
+// Hoisted out of app/store/[slug]/ on 2026-09-19 so the dashboard's business
+// logo uses this implementation rather than a second one. The rule below is
+// the whole reason this component exists, and a copy of it in another folder
+// is a copy that can drift — the same hand-maintained-duplicate shape that has
+// already cost this repo a Traffic branch and a lane classifier.
+//
+// The name still fits: every consumer renders an image belonging to a Store —
+// its products, and now its logo. There is exactly one host rule here and one
+// remotePatterns entry in next.config.ts, and they are written to match.
 //
 // ============ WHY THIS EXISTS AND NOT A BARE next/image ================
 //
@@ -32,28 +45,10 @@ import Image from "next/image";
 // This also fails in the safe direction. An unrecognised host renders as it
 // always did instead of taking the page down with it.
 
-/**
- * Can Next's optimizer actually serve this source?
- *
- * Deliberately the same shape as the `remotePatterns` entry in
- * next.config.ts, including the refusal of query strings — if these two
- * disagree, the disagreement is a render-time throw.
- */
-export function isOptimizableImageSrc(src: string): boolean {
-  // A path into public/. Covered by Next's default localPatterns.
-  if (src.startsWith("/") && !src.startsWith("//")) return true;
-  try {
-    const u = new URL(src);
-    return (
-      u.protocol === "https:" &&
-      u.hostname.endsWith(".public.blob.vercel-storage.com") &&
-      u.search === ""
-    );
-  } catch {
-    // Not a URL we can reason about — so not one we hand to the optimizer.
-    return false;
-  }
-}
+// The rule itself lives in lib/images/optimizableSource.ts so it can be
+// unit-tested against next.config.ts without booting a browser. Re-exported
+// here because this component is where callers already look for it.
+export { isOptimizableImageSrc };
 
 type Common = {
   src: string;

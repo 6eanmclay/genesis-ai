@@ -8,7 +8,7 @@
 // only when a product actually has more than one image, letting a
 // customer swap the hero client-side (no page reload) rather than a real,
 // separate gallery component being needed for the single-image case.
-import { StoreImage } from "../../StoreImage";
+import { StoreImage } from "@/components/StoreImage";
 import { useState } from "react";
 
 export function ProductGallery({

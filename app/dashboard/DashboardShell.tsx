@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { StoreImage } from "@/components/StoreImage";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -662,16 +663,30 @@ export function DashboardShell({
         // The business's own generated identity, distinct from Genesis's
         // (see the frozen design record's "Genesis and business have
         // separate visual identities" principle) — a small circular mark
-        // beside the name, never replacing genesisIcon above. Plain <img>,
-        // not next/image: real generated images live on Vercel Blob, an
-        // arbitrary-per-deployment host next/image can't optimize without
-        // remotePatterns config — the existing product-image gallery
-        // (app/dashboard/products/page.tsx) already made this same call
-        // for the same reason.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        // beside the name, never replacing genesisIcon above.
+        //
+        // THE REASON FOR THE OLD PLAIN <img> WAS WRONG (2026-09-19). It read
+        // "real generated images live on Vercel Blob, an arbitrary-per-
+        // deployment host next/image can't optimize without remotePatterns
+        // config". Blob's subdomain is the STORE id and is fixed for the
+        // store's lifetime; the config was simply never written. It is now.
+        //
+        // StoreImage, NOT next/image directly, and deliberately: Store.logoUrl
+        // is not guaranteed to be a Blob URL. update_brand_logo takes
+        // `imageUrl: z.string()` with no URL validation and no ownership
+        // resolution (updateHero's resolveOwnedImageUrl has no counterpart
+        // here), so an owner-approved external logo is a legitimate value.
+        // next/image THROWS on a host remotePatterns misses, which would take
+        // down every dashboard page rather than show one broken 20px mark.
+        // StoreImage decides on who owns the host and falls back to the exact
+        // <img> this used to be.
+        //
+        // 20px box, so explicit dimensions rather than `fill`.
+        <StoreImage
           src={logoUrl}
           alt={`${storeName} icon`}
+          width={20}
+          height={20}
           className="h-5 w-5 shrink-0 rounded-full object-cover"
         />
       )}

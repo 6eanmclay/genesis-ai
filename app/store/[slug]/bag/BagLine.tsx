@@ -1,4 +1,4 @@
-import { StoreImage } from "../StoreImage";
+import { StoreImage } from "@/components/StoreImage";
 import Link from "next/link";
 import { formatMoney } from "@/lib/money";
 import type { DisplayPrice } from "@/lib/pricing/displayPrice";

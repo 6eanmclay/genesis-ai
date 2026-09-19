@@ -1,6 +1,6 @@
 "use client";
 
-import { StoreImage } from "../../StoreImage";
+import { StoreImage } from "@/components/StoreImage";
 import { useActionState, useState } from "react";
 import { createCheckoutSession, previewCheckoutPrice } from "../../actions";
 import type { CheckoutPreviewState } from "@/lib/promotions/checkoutPreview";

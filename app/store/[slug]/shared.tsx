@@ -1,4 +1,4 @@
-import { StoreImage } from "./StoreImage";
+import { StoreImage } from "@/components/StoreImage";
 import { resolveSectionOrder, type SectionKey } from "@/lib/storefrontSections";
 import { prisma } from "@/lib/prisma";
 import { isPaymentConnected } from "@/lib/dashboard/needsAttention";
