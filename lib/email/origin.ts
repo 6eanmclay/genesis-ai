@@ -1,3 +1,5 @@
+import { configuredAppOrigin } from "@/lib/config/appOrigin";
+
 // WHERE GENESIS LIVES, ANSWERED WITHOUT A REQUEST.
 //
 // ============ WHY getBaseUrl CANNOT DO THIS (2026-09-01) ===============
@@ -24,23 +26,19 @@
 /**
  * The canonical origin for links in email, or null when nothing says.
  *
- * NEXTAUTH_URL first: it is the value that already has to be correct for sign-in
- * to work, so a deployment where it is wrong is broken in a louder way than
- * this. VERCEL_PROJECT_PRODUCTION_URL second — Vercel sets it to the project's
- * stable production domain, which is the right target even when a job happens
- * to run on a preview deployment.
+ * ONE RESOLVER SINCE 2026-09-22 (migration phase 1). This used to read the
+ * environment itself, in a different order from canonicalBaseUrl() — so
+ * setting NEXTAUTH_URL moved the links in email while leaving PayPal's webhook
+ * registration pointing elsewhere. Both now ask lib/config/appOrigin.ts, which
+ * documents the precedence and why Vercel's own variable is not configuration.
  *
- * Deliberately NOT VERCEL_URL: that is the per-deployment URL, unique to one
- * build, so a link built from it would rot the moment anything else shipped.
+ * The null is still the point of this function, and it is not the shared
+ * helper's decision: an email link that cannot be built correctly is OMITTED
+ * rather than guessed, because an owner who clicks a broken link in a sale
+ * notification learns not to trust the next one.
  */
 export function emailOrigin(): string | null {
-  const configured = process.env.NEXTAUTH_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-
-  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
-  if (vercel) return `https://${vercel.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
-
-  return null;
+  return configuredAppOrigin();
 }
 
 /**

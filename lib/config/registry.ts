@@ -89,8 +89,11 @@ export const CONFIG: ConfigEntry[] = [
   { name: "NEXTAUTH_URL", group: "core", requirement: "optional", secret: false,
     purpose: "The canonical origin for auth callbacks.",
     absence: "Inferred from the request. Fine on Vercel; wrong behind an unusual proxy." },
+  { name: "APP_CANONICAL_URL", group: "core", requirement: "optional", secret: false,
+    purpose: "This application's own origin, stated rather than inferred. Used for every durable link — webhook registrations, email links, password resets.",
+    absence: "Falls back to NEXTAUTH_URL, then to VERCEL_PROJECT_PRODUCTION_URL, which Vercel derives from the shortest attached domain and can change without a deploy." },
   { name: "VERCEL_PROJECT_PRODUCTION_URL", group: "core", requirement: "optional", secret: false,
-    purpose: "The public origin used to build absolute links.",
+    purpose: "The public origin used to build absolute links, when APP_CANONICAL_URL does not say.",
     absence: "Links fall back to the request's own origin." },
 
   // ---- payments ----------------------------------------------------------

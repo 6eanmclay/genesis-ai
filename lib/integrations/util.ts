@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import type { IntegrationProvider } from "@prisma/client";
+import { configuredAppOrigin } from "@/lib/config/appOrigin";
 
 // Shared by every OAuth-style connector — extracted out of stripe.ts during
 // PH-06 so PayPal (and any future redirect-based connector) doesn't
@@ -40,13 +41,16 @@ export function integrationCallbackUrl(baseUrl: string, provider: IntegrationPro
  * hostname — it works until the deployment is rotated, and then their refunds
  * silently stop arriving with nothing anywhere saying why.
  *
- * VERCEL_PROJECT_PRODUCTION_URL is the project's own production domain and is
- * present automatically on every Vercel deployment, so this needs no new
- * configuration. Falls back to the request host locally, where there is no
- * canonical domain to prefer.
+ * THE ORIGIN IS RESOLVED IN ONE PLACE (2026-09-22, migration phase 1). This
+ * read VERCEL_PROJECT_PRODUCTION_URL directly while emailOrigin() read
+ * NEXTAUTH_URL first, so the same question had two answers and no single knob
+ * moved both. lib/config/appOrigin.ts is now that knob; see its comment for
+ * why Vercel's variable cannot be trusted as configuration during a domain
+ * migration.
+ *
+ * Falls back to the request host when nothing is configured, which is what
+ * local development relies on and is unchanged.
  */
 export async function canonicalBaseUrl(): Promise<string> {
-  const domain = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
-  if (domain) return domain.startsWith("http") ? domain : `https://${domain}`;
-  return getBaseUrl();
+  return configuredAppOrigin() ?? getBaseUrl();
 }

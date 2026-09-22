@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { normalizeEmail } from "@/lib/auth/normalizeEmail";
 import { recordSecurityEvent, SECURITY_EVENTS } from "@/lib/security/events";
-import { getBaseUrl } from "@/lib/integrations/util";
+import { canonicalBaseUrl } from "@/lib/integrations/util";
 import { createPasswordResetToken } from "@/lib/auth/passwordReset";
 import { sendPasswordResetEmail } from "@/lib/email/passwordReset";
 import { isEmailConfigured } from "@/lib/email/sendEmail";
@@ -84,7 +84,22 @@ export async function requestPasswordReset(
     // side effect.
     if (user) {
       const rawToken = await createPasswordResetToken(user.id);
-      const baseUrl = await getBaseUrl();
+      // ============ A LINK IN AN EMAIL IS NOT A REDIRECT (2026-09-22) ====
+      //
+      // This was getBaseUrl(), which reads the incoming Host header. That is
+      // right for an OAuth callback, where the browser must return to the
+      // origin the person actually used, and wrong for anything that leaves
+      // the request and gets clicked later from a mail client.
+      //
+      // During a domain migration the difference is not theoretical: a reset
+      // requested on the old hostname would email a link to the old hostname,
+      // which keeps working only until that hostname is retired — and the
+      // person holding the email is locked out with no way to tell why.
+      //
+      // canonicalBaseUrl, so the link points at the application's stated
+      // origin. It still falls back to the request host when nothing is
+      // configured, which is what local development needs.
+      const baseUrl = await canonicalBaseUrl();
       const resetUrl = `${baseUrl}/reset-password?token=${rawToken}`;
       await sendPasswordResetEmail(email, resetUrl);
       // Recorded only for a real account, matching the refusal rule directly

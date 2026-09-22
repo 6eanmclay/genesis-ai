@@ -4,6 +4,10 @@ import {
   buildTaskRecapMessage,
 } from "@/lib/dashboard/taskConversation";
 import { integrationCallbackUrl, canonicalBaseUrl } from "@/lib/integrations/util";
+import { configuredAppOrigin } from "@/lib/config/appOrigin";
+import { emailOrigin, orderUrl } from "@/lib/email/origin";
+import { paypalWebhookUrl } from "@/lib/integrations/paypal";
+import { readFileSync } from "node:fs";
 
 // TWO SMALL SURFACES WHERE BEING WRONG IS QUIET:
 //
@@ -166,6 +170,142 @@ async function main() {
     assert(`and never returns a function (${dedupeKey})`, typeof seeded === "string", typeof seeded);
   }
 
+
+  // ==========================================================================
+  console.log("\n=== 7. ONE CONFIGURED ORIGIN (migration phase 1) ===\n");
+  // ==========================================================================
+  //
+  // canonicalBaseUrl() and emailOrigin() used to read the environment
+  // separately and in different orders, so setting NEXTAUTH_URL moved the
+  // links in email while leaving PayPal's webhook registration pointing
+  // elsewhere. They now share lib/config/appOrigin.ts.
+  //
+  // THIS PHASE MUST BE A NO-OP IN PRODUCTION, and section 7c is what proves
+  // it: with the environment shaped exactly as production's is, every value is
+  // byte-identical to what the old code produced.
+  {
+    const saved = {
+      app: process.env.APP_CANONICAL_URL,
+      auth: process.env.NEXTAUTH_URL,
+      vercel: process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    };
+    const clear = () => {
+      delete process.env.APP_CANONICAL_URL;
+      delete process.env.NEXTAUTH_URL;
+      delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    };
+    try {
+      console.log("-- 7a. precedence --");
+      clear();
+      process.env.VERCEL_PROJECT_PRODUCTION_URL = "vercel.example.com";
+      check("Vercel's guess is used when nothing else says",
+        configuredAppOrigin(), "https://vercel.example.com");
+      process.env.NEXTAUTH_URL = "https://auth.example.com";
+      check("a stated NEXTAUTH_URL outranks it", configuredAppOrigin(), "https://auth.example.com");
+      process.env.APP_CANONICAL_URL = "https://app.example.com";
+      check("and APP_CANONICAL_URL outranks both", configuredAppOrigin(), "https://app.example.com");
+
+      clear();
+      check("nothing configured returns null, never a guess", configuredAppOrigin(), null);
+      process.env.APP_CANONICAL_URL = "   ";
+      check("an empty value is not an origin", configuredAppOrigin(), null);
+
+      console.log("\n-- 7b. normalisation --");
+      clear();
+      process.env.APP_CANONICAL_URL = "app.example.com";
+      check("a bare domain becomes https", configuredAppOrigin(), "https://app.example.com");
+      process.env.APP_CANONICAL_URL = "http://localhost:3000";
+      check("an http origin survives, so local development works",
+        configuredAppOrigin(), "http://localhost:3000");
+      process.env.APP_CANONICAL_URL = "https://app.example.com/";
+      check("a trailing slash is removed, so paths do not double up",
+        configuredAppOrigin(), "https://app.example.com");
+      process.env.APP_CANONICAL_URL = "  app.example.com  ";
+      check("surrounding whitespace is trimmed", configuredAppOrigin(), "https://app.example.com");
+
+      console.log("\n-- 7c. PHASE 1 IS A NO-OP: production's exact env shape --");
+      // Production today: APP_CANONICAL_URL set to the current origin,
+      // NEXTAUTH_URL unset, VERCEL_PROJECT_PRODUCTION_URL set by Vercel to the
+      // same host. Every durable URL must be what it was before this change.
+      clear();
+      const LIVE = "genesis-ai-rho.vercel.app";
+      process.env.VERCEL_PROJECT_PRODUCTION_URL = LIVE;
+      const beforeCanonical = await canonicalBaseUrl();
+      const beforeEmail = emailOrigin();
+      process.env.APP_CANONICAL_URL = `https://${LIVE}`;
+      check("canonicalBaseUrl is unchanged", await canonicalBaseUrl(), beforeCanonical);
+      check("emailOrigin is unchanged", emailOrigin(), beforeEmail);
+      check("both agree, which they did not always do", await canonicalBaseUrl(), emailOrigin());
+      check("and the value is the live production origin",
+        await canonicalBaseUrl(), `https://${LIVE}`);
+      check("the PayPal refund webhook is byte-identical",
+        paypalWebhookUrl(await canonicalBaseUrl(), "store_123"),
+        `https://${LIVE}/api/webhooks/paypal/store_123`);
+      check("the order link in a sale email is byte-identical",
+        orderUrl("acme", "ord_1"), `https://${LIVE}/b/acme/orders/ord_1`);
+
+      console.log("\n-- 7d. the two resolvers can no longer disagree --");
+      clear();
+      process.env.NEXTAUTH_URL = "https://auth.example.com";
+      process.env.VERCEL_PROJECT_PRODUCTION_URL = "vercel.example.com";
+      // Before this change emailOrigin preferred NEXTAUTH_URL and
+      // canonicalBaseUrl ignored it entirely: a webhook and an email link
+      // built from the same deployment pointed at two different hosts.
+      check("one knob moves both", await canonicalBaseUrl(), emailOrigin());
+      check("and it is the stated one", emailOrigin(), "https://auth.example.com");
+    } finally {
+      clear();
+      if (saved.app !== undefined) process.env.APP_CANONICAL_URL = saved.app;
+      if (saved.auth !== undefined) process.env.NEXTAUTH_URL = saved.auth;
+      if (saved.vercel !== undefined) process.env.VERCEL_PROJECT_PRODUCTION_URL = saved.vercel;
+    }
+  }
+
+  // ==========================================================================
+  console.log("\n=== 8. WHICH URLS ARE PINNED AND WHICH FOLLOW THE REQUEST ===\n");
+  // ==========================================================================
+  //
+  // The distinction this whole migration turns on, asserted against the source
+  // so it cannot quietly invert. A durable link built from the request Host
+  // points at whatever hostname the person happened to use, which during a
+  // migration is the one about to be retired.
+  {
+    const src = (p: string) =>
+      readFileSync(p, "utf8").replace(/\r\n?/g, "\n")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+
+    const reset = src("app/forgot-password/actions.ts");
+    assert("the password-reset email link uses the canonical origin",
+      /const baseUrl = await canonicalBaseUrl\(\)/.test(reset));
+    assert("SABOTAGE: it cannot regress to the request host",
+      !/getBaseUrl/.test(reset),
+      "getBaseUrl reads the Host header, which is wrong for a link clicked later from a mail client");
+    assert("CONTROL: the stripper still sees real code", reset.includes("reset-password?token="));
+
+    // PINNED — durable, registered or emailed.
+    const paypal = src("lib/integrations/paypal.ts");
+    assert("the PayPal refund webhook stays pinned",
+      /canonicalBaseUrl\(\)/.test(paypal) && !/getBaseUrl\(\)/.test(paypal));
+    const growth = src("app/dashboard/growth-points/page.tsx");
+    assert("the referral link stays pinned", /canonicalBaseUrl\(\)/.test(growth));
+    const sale = src("lib/orders/notifyOwnerOfSale.ts");
+    assert("the sale-notification link stays pinned", /orderUrl\(/.test(sale));
+
+    // REQUEST-DERIVED — the browser must come back where it started.
+    for (const connector of ["stripe", "square", "quickbooks", "xero", "mailchimp", "printful", "tiktok"]) {
+      const code = src(`lib/integrations/${connector}.ts`);
+      assert(`${connector}'s OAuth redirect follows the request`, /getBaseUrl\(\)/.test(code));
+      assert(`  and ${connector} is NOT pinned to the canonical origin`,
+        !/canonicalBaseUrl\(\)/.test(code),
+        "pinning it would break connecting from localhost or a preview");
+    }
+    const checkout = src("app/store/[slug]/actions.ts");
+    assert("checkout return URLs follow the request", /getBaseUrl\(\)/.test(checkout));
+    assert("  and are not pinned", !/canonicalBaseUrl\(\)/.test(checkout));
+    const workspace = src("app/dashboard/BusinessWorkspace.tsx");
+    assert("storefront links are unchanged by this phase", /getBaseUrl\(\)/.test(workspace));
+  }
 
   console.log(`\n${failures === 0 ? "All copy-and-url assertions passed." : `${failures} assertion(s) FAILED.`}`);
   process.exit(failures === 0 ? 0 : 1);
