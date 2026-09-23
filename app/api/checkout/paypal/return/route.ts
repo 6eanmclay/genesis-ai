@@ -494,6 +494,59 @@ export async function GET(request: NextRequest) {
 
     await notifyOwnerOfSale({ orderId: order.id, storeId: store.id });
 
+    // ============ THE MARKER IS CLOSED ON SUCCESS TOO (2026-09-23) ======
+    //
+    // The PENDING row above is a durable marker written BEFORE order creation
+    // so a real capture can never vanish without trace. The failure path
+    // below supersedes it with FAILED. The SUCCESS path never superseded it at
+    // all — so every PayPal sale that worked left a PENDING row behind for
+    // ever, and the Office read it back as unfinished work.
+    //
+    // Production showed exactly that: two sales, both with orders created
+    // within 200ms of their marker, both still reported as "finishing order
+    // creation — still pending" days later. Nothing was wrong with either
+    // order; the only defect was that nothing ever said so.
+    //
+    // SAME executionId, DELIBERATELY. lib/dashboard/needsAttention.ts surfaces
+    // a PENDING row only while it is the LATEST row for its executionId, so
+    // this closes the marker through the mechanism that already exists rather
+    // than adding a second one. Same shape as the FAILED write below.
+    //
+    // AFTER the order and the email, so it can only be written once both have
+    // genuinely happened. A marker closed before the work was done would be a
+    // worse lie than one left open.
+    //
+    // GUARDED, BECAUSE THIS SITS INSIDE THE try THAT REPORTS FAILURE. By the
+    // time we reach here the payment is captured, the order exists and the
+    // owner has been emailed. If this bookkeeping write threw and reached the
+    // catch below, a completed sale would be recorded FAILED and the buyer
+    // sent to the "payment pending" page — a worse falsehood than the one
+    // being fixed. So the worst case here degrades to the OLD behaviour: an
+    // open marker, which is a false alarm the owner can see and dismiss,
+    // rather than a false failure they cannot.
+    try {
+      await recordExecution({
+        executionId,
+        action: EXECUTION_ACTIONS.CHECKOUT_PAYPAL_CAPTURE,
+        status: "SUCCESS",
+        verified: true,
+        message: `PayPal capture ${token} became order ${order.id}`,
+        retryable: false,
+        actorType: "USER",
+        actorId: null,
+        storeId: store.id,
+        storeDraftId: null,
+        schemaVersion: CURRENT_EXECUTION_SCHEMA_VERSION,
+        timestamp: new Date(),
+        metadata: { token, productId, amountInCents, orderId: order.id },
+      });
+    } catch (markerError) {
+      console.error(
+        `[paypal/return] order ${order.id} succeeded but its capture marker could not be closed:`,
+        markerError
+      );
+    }
+
     return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));
   } catch (error) {
     console.error(`[paypal/return] order creation failed after real capture for order ${token}:`, error);
