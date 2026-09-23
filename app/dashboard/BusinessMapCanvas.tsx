@@ -11,6 +11,7 @@ import { MapCentreJ4 } from "./MapCentreJ4";
 import { useJ4State } from "@/components/j4/useJ4State";
 import { MapDataStream } from "./MapDataStream";
 import { ConnectionChooser } from "./ConnectionChooser";
+import { ConnectServiceDialog } from "./ConnectServiceDialog";
 import { EntityCarousel } from "./EntityCarousel";
 import { focusPlan } from "@/lib/businessModel/focusPlan";
 import {
@@ -274,6 +275,8 @@ export function BusinessMapCanvas({
   /** The domain being looked inside, or null for the whole business. */
   const [open, setOpen] = useState<MapDomainKey | null>(null);
   const [chooserOpen, setChooserOpen] = useState(false);
+  /** The one service whose own connect dialog is open, if any. */
+  const [connectService, setConnectService] = useState<MapService | null>(null);
   const [narrow, setNarrow] = useState(false);
   // ONE J4, THE SAME ONE. The centre reads the store the dock and the Office
   // band read, so the J4 an owner just left in the corner is recognisably the
@@ -963,7 +966,23 @@ export function BusinessMapCanvas({
                 domainLabel={domain?.label ?? ""}
                 destination={destination}
                 noticed={noticed}
-                onConnect={() => setChooserOpen(true)}
+                // ============ THE CARD KNOWS WHICH SERVICE IT IS =========
+                //
+                // This was `() => setChooserOpen(true)`, which threw away the
+                // serviceId the card hands over and opened the whole chooser.
+                // An owner who had found Facebook in Social was then shown
+                // every service and asked to find Facebook again.
+                //
+                // Named service -> its own dialog, right here. No id (the
+                // branch's own "Connect something" affordance) still opens the
+                // chooser, because there is genuinely nothing to focus on.
+                onConnect={(serviceId) => {
+                  const named = serviceId
+                    ? services.find((s) => s.id === serviceId && s.provider) ?? null
+                    : null;
+                  if (named) setConnectService(named);
+                  else setChooserOpen(true);
+                }}
               />
             </div>
           )}
@@ -973,10 +992,25 @@ export function BusinessMapCanvas({
               services={services}
               connectionsHref={destinations.connections?.href ?? "#"}
               slug={connectSlug}
+              onConnectService={(s) => {
+                setChooserOpen(false);
+                setConnectService(s);
+              }}
               onClose={() => {
                 setChooserOpen(false);
                 if (open === "connections") setOpen(null);
               }}
+            />
+          )}
+
+          {/* ONE SERVICE, WHERE THE OWNER ALREADY IS. Inside the same map
+              container as everything else, so the map stays on screen behind
+              it and nothing navigates. */}
+          {connectService && (
+            <ConnectServiceDialog
+              service={connectService}
+              slug={connectSlug}
+              onClose={() => setConnectService(null)}
             />
           )}
         </div>

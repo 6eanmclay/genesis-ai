@@ -1,9 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { connectIntegration } from "@/app/dashboard/connectionsActions";
-import { SubmitButton } from "./SubmitButton";
 import { useEffect, useState } from "react";
 import type { MapService } from "./BusinessMapCanvas";
 
@@ -94,11 +91,14 @@ function ServiceIcon({ service }: { service: MapService }) {
 export function ConnectionChooser({
   services,
   connectionsHref,
+  onConnectService,
   slug,
   onClose,
 }: {
   services: MapService[];
   connectionsHref: string;
+  /** Hand one service to the map, which opens its own connect dialog. */
+  onConnectService: (service: MapService) => void;
   /**
    * Which business is connecting. Passed through to connectIntegration exactly
    * as the Connections page passes it, so a connect started from the map
@@ -107,12 +107,6 @@ export function ConnectionChooser({
   slug: string | undefined;
   onClose: () => void;
 }) {
-  // WHERE THE OWNER WAS, so the callback can put them back. The OAuth round
-  // trip leaves the app entirely; without this the merchant returns to the
-  // Connections page having started on the Business Map, which is the same
-  // loss of context this change exists to remove — just at the other end.
-  // connectIntegration's own safeReturnTo refuses anything not same-origin.
-  const returnTo = usePathname();
   // Escape closes, and the chooser takes focus off the map beneath it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -154,30 +148,28 @@ export function ConnectionChooser({
       ) : service.available ? (
         <div className="flex shrink-0 items-center gap-2 pl-11 sm:pl-0">
           {/* ============ CONNECT MEANS CONNECT (2026-09-23) ============
-              This was a <Link> to the Connections page. An owner who had
-              already found Facebook here, read "Not connected", and pressed
-              Connect was put on another screen and asked to scroll until they
-              found Facebook a second time. The card already knows which
-              provider it is; nothing was missing but the wiring.
+              This was a <Link> to the Connections page: an owner who had
+              already found Facebook here was put on another screen and asked
+              to scroll until they found it a second time.
 
-              THE SAME ACTION THE CONNECTIONS PAGE USES, deliberately.
-              connectIntegration is where permission, the execution log, the
-              OAuth handoff and the redirect all live. A second path from here
-              would be a second place for authorization behaviour to drift,
-              which is exactly what must not happen to an OAuth flow.
+              It now hands the service up to the map, which opens that
+              service's own dialog — one place where the connect action lives,
+              reached identically from here and from the Social card. The
+              dialog binds connectIntegration, the same server action the
+              Connections page submits, so there is no second authorization
+              path to drift.
 
               A service with no provider still links away — Genesis has no
               connector for it, and a button that could only fail is worse
               than a link that goes somewhere real. */}
           {service.provider ? (
-            <form action={connectIntegration.bind(null, slug, service.provider, returnTo)}>
-              <SubmitButton
-                pendingText="Connecting…"
-                className="rounded-full border border-black/[.12] px-3 py-1 text-[11px] font-medium text-black disabled:opacity-60 dark:border-white/[.20] dark:text-zinc-50"
-              >
-                Connect
-              </SubmitButton>
-            </form>
+            <button
+              type="button"
+              onClick={() => onConnectService(service)}
+              className="rounded-full border border-black/[.12] px-3 py-1 text-[11px] font-medium text-black dark:border-white/[.20] dark:text-zinc-50"
+            >
+              Connect
+            </button>
           ) : (
             <Link
               href={connectionsHref}

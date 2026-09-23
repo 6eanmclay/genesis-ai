@@ -804,22 +804,11 @@ async function main() {
       !connectLinks.some((href) => /\/connections(\?|#|$)/.test(href)),
       JSON.stringify(connectLinks));
 
-    // AND IT IS THE SERVER ACTION, not a hand-rolled fetch. React renders a
-    // bound server action as a form carrying its own action id, so the marker's
-    // presence is what distinguishes `connectIntegration.bind(...)` from a
-    // button that merely looks like one.
-    const connectForms = await chooser.evaluate((el) =>
-      Array.from(el.querySelectorAll("form")).filter((f) =>
-        Array.from(f.querySelectorAll("button")).some(
-          (b) => (b.textContent ?? "").trim() === "Connect")).length);
-    assert("each Connect is a form submission", connectForms > 0, `${connectForms} forms`);
-    const actionMarkers = await chooser.evaluate((el) =>
-      Array.from(el.querySelectorAll("form")).filter((f) =>
-        f.hasAttribute("action") ||
-        f.querySelector('input[name^="$ACTION"]') !== null).length);
-    assert("  bound to a server action rather than a client-side handler",
-      actionMarkers > 0, `${actionMarkers} of ${connectForms}`);
-
+    // AND IT OPENS THAT SERVICE'S OWN DIALOG (2026-09-23). This asserted the
+    // chooser row submitted a bound server action directly. It no longer does:
+    // both entry points — the Social card and this row — now hand one service
+    // to the same dialog, so the connect action lives in exactly one place.
+    // Relocated to the control that owns it rather than dropped.
     // FACEBOOK SPECIFICALLY, because that is the row the defect was found on.
     const facebookRow = chooser.locator("li").filter({ hasText: "Facebook" }).first();
     if ((await facebookRow.count()) > 0) {
@@ -836,6 +825,7 @@ async function main() {
         console.log("  (Facebook already connected in this fixture — row shows Manage)");
       }
     }
+
     const create = chooser.getByRole("link", { name: "Create account" });
     assert("Create account is offered", (await create.count()) > 0);
     const createHref = await create.first().getAttribute("href");
@@ -858,6 +848,38 @@ async function main() {
       ((await orb.textContent()) ?? "").trim() === "");
     assert("and Connections never becomes a carousel",
       (await page.locator('[data-testid="entity-carousel"]').count()) === 0);
+
+    // LAST, AND IT REOPENS THE CHOOSER ON PURPOSE. Selecting a row replaces
+    // the chooser with that service's dialog, so this cannot run before the
+    // close assertions above — there would be no chooser left to close.
+    //
+    // Both entry points — the Social card and a chooser row — reach the SAME
+    // dialog, which is what keeps one connect action rather than two.
+    {
+      await page.getByRole("button", { name: /^Connections,/ }).click();
+      await page.waitForSelector('[data-testid="connection-chooser"]', { timeout: 10_000 });
+      const urlBeforeChooser = page.url();
+      await page.locator('[data-testid="connection-chooser"]')
+        .getByRole("button", { name: "Connect" }).first().click();
+      await page.waitForSelector('[data-testid="connect-service-dialog"]', { timeout: 10_000 });
+      assert("a chooser row opens the same connect dialog",
+        (await page.locator('[data-testid="connect-service-dialog"]').count()) === 1);
+      assert("  and the full list is replaced, not stacked",
+        (await page.locator('[data-testid="connection-chooser"]').count()) === 0);
+      assert("  without navigating anywhere", page.url() === urlBeforeChooser,
+        `${urlBeforeChooser} -> ${page.url()}`);
+      const forms = await page.locator('[data-testid="connect-service-dialog"]').evaluate((el) =>
+        Array.from(el.querySelectorAll("form")).filter((f) =>
+          f.hasAttribute("action") || f.querySelector('input[name^="$ACTION"]') !== null).length);
+      assert("  and the dialog carries the canonical bound action", forms > 0, `${forms}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector('[data-testid="connect-service-dialog"]', { state: "detached", timeout: 5_000 });
+      // Back out to the whole business, because selecting the branch to reach
+      // the chooser left the map inside it and the sections after this one
+      // start from the ring.
+      await page.getByRole("button", { name: "Whole business" }).click();
+      await page.waitForTimeout(350);
+    }
 
     await page.screenshot({ path: `${SHOTS}/business-map-desktop-firstscreen.png`, fullPage: false });
 
@@ -1084,6 +1106,76 @@ async function main() {
       assert("while Instagram, which Genesis can connect, is offered one",
         (await page.locator('[data-testid="entity-card"]').filter({ hasText: "Instagram" })
           .first().locator('[data-testid="entity-connect"]').count()) === 1);
+
+      // ================================================================
+      // CONNECT HAPPENS WHERE THE OWNER IS (2026-09-23)
+      // ================================================================
+      //
+      // Sean: "The Business Map Facebook card must never navigate to the
+      // Connections page... The Facebook card in the Business Map is itself
+      // the connection entry point."
+      //
+      // The card already carried its own serviceId and the canvas threw it
+      // away, opening the whole chooser — so an owner who had found Facebook
+      // was shown every service and asked to find it again. These assertions
+      // are about WHERE the interaction happens, which is the part a unit test
+      // cannot see.
+      const social = page.locator('[data-testid="entity-card"]');
+      const connectableCard = social
+        .filter({ hasText: "Facebook" })
+        .first()
+        .locator('[data-testid="entity-connect"]');
+      const cardName = (await connectableCard.count()) > 0 ? "Facebook" : "Instagram";
+      const target = social.filter({ hasText: cardName }).first().locator('[data-testid="entity-connect"]');
+
+      if ((await target.count()) === 1) {
+        const urlBefore = page.url();
+        await target.click();
+
+        // THE LOCAL UI, not another screen.
+        await page.waitForSelector('[data-testid="connect-service-dialog"]', { timeout: 10_000 });
+        const dialog = page.locator('[data-testid="connect-service-dialog"]');
+        assert(`${cardName}'s Connect opens a dialog in place`, (await dialog.count()) === 1);
+
+        // AND THE MAP IS STILL THERE BEHIND IT — nothing navigated.
+        assert("the owner stays on the Business Map", page.url() === urlBefore,
+          `${urlBefore} -> ${page.url()}`);
+        assert("  and the URL never became /connections",
+          !/\/connections(\?|#|$)/.test(page.url()), page.url());
+        assert("  with the map still rendered underneath",
+          (await page.locator('[data-testid="entity-carousel"]').count()) === 1);
+
+        // IT NAMES THE ONE SERVICE, rather than listing everything again.
+        const dialogText = await dialog.innerText();
+        assert(`the dialog says it is connecting ${cardName}`,
+          dialogText.includes(cardName), dialogText.slice(0, 200));
+        assert("and offers that as the action",
+          (await dialog.getByRole("button", { name: new RegExp(`Connect ${cardName}`) }).count()) === 1,
+          dialogText.slice(0, 200));
+        assert("no full connection list is shown alongside it",
+          (await page.locator('[data-testid="connection-chooser"]').count()) === 0);
+
+        // THE CANONICAL ACTION. React renders a bound server action as a form
+        // carrying its own action id, so the marker distinguishes
+        // connectIntegration.bind(...) from a button that merely looks like
+        // one. NOT SUBMITTED — that would spend a real OAuth attempt.
+        const boundForms = await dialog.evaluate((el) =>
+          Array.from(el.querySelectorAll("form")).filter((f) =>
+            f.hasAttribute("action") || f.querySelector('input[name^="$ACTION"]') !== null).length);
+        assert("  bound to the canonical connect server action", boundForms > 0, `${boundForms}`);
+        assert("and nothing in the dialog links to /connections",
+          (await dialog.evaluate((el) =>
+            Array.from(el.querySelectorAll("a"))
+              .filter((a) => /\/connections(\?|#|$)/.test(a.getAttribute("href") ?? "")).length)) === 0);
+
+        await page.screenshot({ path: `${SHOTS}/connect-service-dialog.png` });
+        await page.keyboard.press("Escape");
+        await page.waitForSelector('[data-testid="connect-service-dialog"]', { state: "detached", timeout: 5_000 });
+        assert("Escape closes it and leaves the map where it was",
+          (await page.locator('[data-testid="entity-carousel"]').count()) === 1);
+      } else {
+        console.log(`  (no connectable social card in this fixture — skipped)`);
+      }
 
       await page.screenshot({ path: `${SHOTS}/carousel-social-desktop.png` });
       await page.getByRole("button", { name: "Whole business" }).click();
