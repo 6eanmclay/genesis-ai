@@ -55,9 +55,66 @@ export async function getPaypalAccessToken(
   return data.access_token as string;
 }
 
-function parseEnvironment(value: string | undefined): PaypalEnvironment {
-  const normalized = value?.trim().toLowerCase();
-  return normalized === "live" ? "live" : "sandbox";
+/**
+ * Where a connect request is allowed to point.
+ *
+ * LOCAL DEVELOPMENT ONLY, AND NOT BY CONVENTION. Next assigns NODE_ENV
+ * "development" for `next dev` and "production" for every other command
+ * (node_modules/next/dist/docs/01-app/02-guides/environment-variables.md), so
+ * Preview and Production builds cannot reach the sandbox branch at all.
+ *
+ * The VERCEL check is belt-and-braces: it closes the gate on the platform even
+ * if something ever ran a dev server there. Two conditions rather than one so
+ * the rule holds whichever way the platform sets NODE_ENV, instead of resting
+ * on a reading of the docs.
+ *
+ * NEITHER VALUE IS OPERATOR CONFIGURATION. lib/config/registry.ts lists both
+ * under NOT_CONFIGURATION — "set by the platform or by the harness rather than
+ * by an operator" — so nobody can open this gate by adding a variable.
+ */
+export function sandboxConnectAllowed(): boolean {
+  return process.env.NODE_ENV === "development" && process.env.VERCEL !== "1";
+}
+
+/**
+ * What a connect request means.
+ *
+ * ============ THE OLD VERSION WAS THE DEFECT (2026-09-23) ==============
+ *
+ * It read:
+ *
+ *     return normalized === "live" ? "live" : "sandbox";
+ *
+ * so a blank field, a typo, "production", or a crafted request all became
+ * sandbox in silence. The payments page pre-filled the input with the literal
+ * string "sandbox" and exempted it from `required`, and its copy sent the
+ * merchant to developer.paypal.com, which shows sandbox credentials by
+ * default. Every arrow pointed the same way: the DEFAULT outcome of connecting
+ * PayPal was an account that takes fake money, and no surface ever said so.
+ *
+ * LIVE IS NOT A DEFAULT HERE, IT IS THE MEANING. Connecting PayPal means
+ * connecting an account that can receive real payments. Sandbox is a separate
+ * request that must be asked for explicitly AND be permitted.
+ *
+ * UNKNOWN VALUES ARE REFUSED, NOT GUESSED. The old code collapsed everything
+ * it did not recognise toward the dangerous side. A value this cannot read is
+ * a question, and the honest answer to a question is to stop.
+ */
+export function resolveConnectEnvironment(
+  requested: string | undefined,
+  sandboxAllowed: boolean
+): PaypalEnvironment {
+  const normalized = requested?.trim().toLowerCase();
+  if (!normalized || normalized === "live") return "live";
+  if (normalized === "sandbox") {
+    if (sandboxAllowed) return "sandbox";
+    throw new Error(
+      "Connecting PayPal here means connecting an account that can receive real payments. Sandbox can only be connected in local development."
+    );
+  }
+  throw new Error(
+    `Unrecognised PayPal environment "${requested}". Leave it blank to connect live PayPal.`
+  );
 }
 
 // The second connector on the Integration Framework (PH-02), and the first
@@ -95,7 +152,9 @@ export const paypalConnector: IntegrationConnector = {
     if (params?.clientId && params?.clientSecret) {
       const clientId = params.clientId.trim();
       const clientSecret = params.clientSecret.trim();
-      const environment = parseEnvironment(params.environment);
+      // Resolved BEFORE the token exchange below, deliberately: a refused
+      // environment must cost nothing — no PayPal call, no webhook, no row.
+      const environment = resolveConnectEnvironment(params.environment, sandboxConnectAllowed());
 
       // Validates the credentials by using them — a failed exchange
       // throws, which the engine turns into a FAILED result.
@@ -178,7 +237,20 @@ export const paypalConnector: IntegrationConnector = {
       fields: [
         { name: "clientId", label: "Client ID", type: "text" },
         { name: "clientSecret", label: "Secret", type: "password" },
-        { name: "environment", label: "Environment (sandbox or live)", type: "text" },
+        // LOCAL DEVELOPMENT ONLY. A merchant is never shown an environment
+        // decision, so there is no free text for them to get wrong — and
+        // removing the input is only the half of this that is visible. The
+        // resolver above refuses a crafted "sandbox" whatever the form
+        // rendered, which is where the rule actually lives.
+        ...(sandboxConnectAllowed()
+          ? [
+              {
+                name: "environment",
+                label: "Environment — blank for live, or 'sandbox' (local dev only)",
+                type: "text" as const,
+              },
+            ]
+          : []),
       ],
     } satisfies ConnectResult;
   },

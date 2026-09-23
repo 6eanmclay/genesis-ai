@@ -384,8 +384,16 @@ export async function PaymentsScreen({
           {!paypalConnected ? (
             paypalFormFields ? (
               <form action={submitPaypalCredentials.bind(null, slug)} className="mt-1 flex w-full flex-col gap-2.5 text-left">
+                {/* NAMES LIVE, BECAUSE THE OLD COPY STEERED THE OTHER WAY
+                    (2026-09-23). It read "Create a PayPal Developer app at
+                    developer.paypal.com and enter its credentials below" —
+                    and that dashboard shows SANDBOX credentials by default.
+                    Paired with an environment input pre-filled with "sandbox",
+                    a merchant following the instructions exactly ended up
+                    connected to an account that takes fake money. */}
                 <p className="text-xs text-zinc-500">
-                  Create a PayPal Developer app at developer.paypal.com and enter its credentials below.
+                  Connect the PayPal account that will receive your payments. Open your PayPal Developer app
+                  under Live, then paste its Client ID and Secret below.
                 </p>
                 {paypalFormFields.map((field) => (
                   <input
@@ -393,8 +401,11 @@ export async function PaymentsScreen({
                     name={field.name}
                     type={field.type}
                     placeholder={field.label}
+                    // The environment field is rendered only under `next dev`,
+                    // where blank still means live. There is no default value:
+                    // pre-filling this input with "sandbox" is what made a
+                    // fake-money connection the path of least resistance.
                     required={field.name !== "environment"}
-                    defaultValue={field.name === "environment" ? "sandbox" : undefined}
                     className="rounded-lg border border-black/[.08] px-4 py-2 text-sm dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
                   />
                 ))}

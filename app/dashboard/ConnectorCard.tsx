@@ -186,7 +186,12 @@ export function ConnectorCard({
               name={field.name}
               type={field.type}
               placeholder={field.label}
-              required={field.name !== "environment"}
+              // EVERY FIELD A CONNECTOR ASKS FOR IS REQUIRED. This used to
+              // exempt "environment", generalised from PayPal's form — but
+              // PayPal is not in this catalog and no connector here has such a
+              // field, so the exemption was dead code that would have silently
+              // made a future connector's field optional.
+              required
               className="rounded-lg border border-black/[.08] px-3 py-1.5 text-sm dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
             />
           ))}
