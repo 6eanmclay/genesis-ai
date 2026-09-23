@@ -1,4 +1,5 @@
 import { CONNECTOR_CATALOG, type ConnectionCategory } from "@/lib/integrations/catalog";
+import type { IntegrationProvider } from "@prisma/client";
 import type { MapDomainKey } from "./businessMap";
 
 // WHAT CONNECTING A SERVICE WOULD ADD TO J4'S UNDERSTANDING.
@@ -71,6 +72,17 @@ export interface ConnectableService {
   available: boolean;
   /** True when THIS business has already connected it. */
   connected: boolean;
+  /**
+   * The IntegrationProvider this service connects as, or null when Genesis has
+   * no connector for it.
+   *
+   * CARRIED SO THE MAP CAN CONNECT IN PLACE (2026-09-23). Without it the map
+   * knew a service's name and whether it was connected but not which connector
+   * to invoke, so its Connect control could only link to the Connections page
+   * and make the owner find the same service again. Read straight off the
+   * catalogue entry, so it cannot name a provider the catalogue does not.
+   */
+  provider: IntegrationProvider | null;
 }
 
 /**
@@ -88,6 +100,7 @@ export function connectableServices(connectedProviders: string[]): ConnectableSe
     domain: CATEGORY_DOMAIN[entry.category],
     available: entry.connector !== null,
     connected: entry.provider !== null && connected.has(entry.provider),
+    provider: entry.provider,
   }));
 }
 

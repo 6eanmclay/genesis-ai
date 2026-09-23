@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { BusinessMap, Certainty, MapDomainKey } from "@/lib/businessModel/businessMap";
+import type { IntegrationProvider } from "@prisma/client";
 import { entitiesFor, type MapProspect } from "@/lib/businessModel/mapEntities";
 import { GENESIS_AVATAR_SIZE } from "@/lib/dashboard/genesisAvatarSize";
 import { GenesisAvatar } from "./GenesisAvatar";
@@ -216,6 +217,14 @@ export interface MapService {
   manage: DomainDestination | null;
   /** The provider's own domain, for its own favicon. Null when unverified. */
   iconDomain: string | null;
+  /**
+   * Which connector this service connects as, or null when there is none.
+   *
+   * What lets the chooser CONNECT rather than link away — see
+   * ConnectionChooser. Null keeps the old behaviour for anything Genesis
+   * cannot connect, which is the honest answer rather than a dead button.
+   */
+  provider: IntegrationProvider | null;
 }
 
 export interface DomainDestination {
@@ -245,6 +254,7 @@ export function BusinessMapCanvas({
   prospects,
   destinations,
   noticed,
+  connectSlug,
 }: {
   map: BusinessMap;
   services: MapService[];
@@ -252,6 +262,14 @@ export function BusinessMapCanvas({
   destinations: Partial<Record<MapDomainKey, DomainDestination>>;
   /** Real GenesisObservations, keyed by the record they are about. */
   noticed: Record<string, string[]>;
+  /**
+   * Which business a connect started from the chooser belongs to.
+   *
+   * Threaded rather than inferred from the URL: the map renders under both
+   * /dashboard and /b/[slug], and a connect that guessed wrong would attach a
+   * merchant's account to a different business of theirs.
+   */
+  connectSlug: string | undefined;
 }) {
   /** The domain being looked inside, or null for the whole business. */
   const [open, setOpen] = useState<MapDomainKey | null>(null);
@@ -954,6 +972,7 @@ export function BusinessMapCanvas({
             <ConnectionChooser
               services={services}
               connectionsHref={destinations.connections?.href ?? "#"}
+              slug={connectSlug}
               onClose={() => {
                 setChooserOpen(false);
                 if (open === "connections") setOpen(null);

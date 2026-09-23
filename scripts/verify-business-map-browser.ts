@@ -777,8 +777,65 @@ async function main() {
       !icons.some((src) => /google\.com\/s2|duckduckgo|favicon\.im|icon\.horse/i.test(src)),
       JSON.stringify(icons.slice(0, 4)));
 
-    // Connect and Create.
-    assert("Connect is offered", (await chooser.getByRole("link", { name: "Connect" }).count()) > 0);
+    // ====================================================================
+    // CONNECT CONNECTS, IT DOES NOT NAVIGATE (2026-09-23)
+    // ====================================================================
+    //
+    // REVERSED, NOT WEAKENED. This asserted `getByRole("link", …)` because
+    // Connect WAS a link to the Connections page — an owner who had already
+    // found Facebook here, read "Not connected" and pressed Connect was put on
+    // another screen and asked to scroll until they found Facebook again. The
+    // assertion was correct about the old behaviour and is now the wrong shape,
+    // so it moves to the control that owns the behaviour instead of being
+    // relaxed until it passes.
+    //
+    // NOT CLICKED, deliberately. Submitting really would start an OAuth round
+    // trip to a live provider. What must be proven is that the control is a
+    // connect action rather than a navigation, and that is readable from the
+    // DOM without spending a real authorization attempt.
+    assert("Connect is offered", (await chooser.getByRole("button", { name: "Connect" }).count()) > 0);
+
+    // THE DEFECT ITSELF: a Connect that is an anchor to the Connections page.
+    const connectLinks = await chooser.evaluate((el) =>
+      Array.from(el.querySelectorAll("a"))
+        .filter((a) => (a.textContent ?? "").trim() === "Connect")
+        .map((a) => a.getAttribute("href") ?? ""));
+    assert("no Connect control navigates to the Connections page",
+      !connectLinks.some((href) => /\/connections(\?|#|$)/.test(href)),
+      JSON.stringify(connectLinks));
+
+    // AND IT IS THE SERVER ACTION, not a hand-rolled fetch. React renders a
+    // bound server action as a form carrying its own action id, so the marker's
+    // presence is what distinguishes `connectIntegration.bind(...)` from a
+    // button that merely looks like one.
+    const connectForms = await chooser.evaluate((el) =>
+      Array.from(el.querySelectorAll("form")).filter((f) =>
+        Array.from(f.querySelectorAll("button")).some(
+          (b) => (b.textContent ?? "").trim() === "Connect")).length);
+    assert("each Connect is a form submission", connectForms > 0, `${connectForms} forms`);
+    const actionMarkers = await chooser.evaluate((el) =>
+      Array.from(el.querySelectorAll("form")).filter((f) =>
+        f.hasAttribute("action") ||
+        f.querySelector('input[name^="$ACTION"]') !== null).length);
+    assert("  bound to a server action rather than a client-side handler",
+      actionMarkers > 0, `${actionMarkers} of ${connectForms}`);
+
+    // FACEBOOK SPECIFICALLY, because that is the row the defect was found on.
+    const facebookRow = chooser.locator("li").filter({ hasText: "Facebook" }).first();
+    if ((await facebookRow.count()) > 0) {
+      const fbText = await facebookRow.innerText();
+      if (/Not connected/.test(fbText)) {
+        assert("Facebook's Connect is a button, not a link",
+          (await facebookRow.getByRole("button", { name: "Connect" }).count()) === 1, fbText);
+        const fbHrefs = await facebookRow.evaluate((li) =>
+          Array.from(li.querySelectorAll("a"))
+            .filter((a) => (a.textContent ?? "").trim() === "Connect")
+            .map((a) => a.getAttribute("href") ?? ""));
+        assert("  and it does not link to /connections", fbHrefs.length === 0, JSON.stringify(fbHrefs));
+      } else {
+        console.log("  (Facebook already connected in this fixture — row shows Manage)");
+      }
+    }
     const create = chooser.getByRole("link", { name: "Create account" });
     assert("Create account is offered", (await create.count()) > 0);
     const createHref = await create.first().getAttribute("href");

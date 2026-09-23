@@ -148,6 +148,8 @@ export async function BusinessMapSection({
       domain: "financials" as const,
       available: true,
       connected: true,
+      // A rail is managed in Payments, not connected from here.
+      provider: null,
       // NO INVENTED CAPABILITY. What is true and checkable is that it is
       // connected and where it is managed.
       description: "Connected through Payments.",
@@ -245,6 +247,7 @@ export async function BusinessMapSection({
           prospects={prospects}
           destinations={destinations}
           noticed={noticed}
+          connectSlug={storeSlug}
         />
       </div>
 
