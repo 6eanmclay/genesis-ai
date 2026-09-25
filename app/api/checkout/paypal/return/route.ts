@@ -1,5 +1,6 @@
 import { sendOrderConfirmation } from "@/lib/orders/orderConfirmation";
 import { notifyOwnerOfSale } from "@/lib/orders/notifyOwnerOfSale";
+import { clearBagOnConfirmedPurchase } from "@/lib/bag/purchaseCompletion";
 import { reportIssue } from "@/lib/observability/reportIssue";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -545,6 +546,28 @@ export async function GET(request: NextRequest) {
         `[paypal/return] order ${order.id} succeeded but its capture marker could not be closed:`,
         markerError
       );
+    }
+
+    // ============ THE BAG IS EMPTIED HERE, NOT ON THE SUCCESS PAGE =====
+    //
+    // A real customer paid for twelve items, reached the confirmed success
+    // page, and her bag still held all twelve — clearBagCookie existed and
+    // had never been called from anywhere.
+    //
+    // THIS PATH CAN DO IT PROPERLY. A route handler may set cookies, and the
+    // paid order was created a few lines above, so the proof and the cookie
+    // jar are in the same place. Stripe cannot do this: its order is written
+    // by a webhook with no customer browser involved, so that path clears
+    // from the success page instead. Same decision function either way.
+    //
+    // GUARDED, for the reason the marker write above is. The payment is
+    // captured and the order exists; a bag that failed to empty must never
+    // turn a completed purchase into the failure branch below, which tells
+    // the buyer their payment could not be confirmed.
+    try {
+      await clearBagOnConfirmedPurchase({ slug, orderId: order.id });
+    } catch (bagError) {
+      console.error(`[paypal/return] order ${order.id} succeeded but the bag could not be cleared:`, bagError);
     }
 
     return NextResponse.redirect(new URL(`/store/${slug}/success?order_id=${order.id}`, request.url));
