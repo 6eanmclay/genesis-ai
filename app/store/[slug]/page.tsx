@@ -846,7 +846,18 @@ export default async function StorefrontPage({
       {paymentPending === "1" && (
         <div className="border-b border-[var(--brand-text)]/[.08] bg-[var(--brand-accent)]/5 px-8 py-4 text-center text-sm">
           Your payment was received. We&apos;re finishing your order — if you
-          don&apos;t see a confirmation shortly, contact us with reference{" "}
+          don&apos;t see a confirmation shortly,{" "}
+          {store.contactEmail ? (
+            <>
+              email{" "}
+              <a className="underline" href={`mailto:${store.contactEmail}`}>
+                {store.contactEmail}
+              </a>{" "}
+              with reference
+            </>
+          ) : (
+            <>contact us with reference</>
+          )}{" "}
           <span className="font-medium">{paymentRef}</span>.
         </div>
       )}
@@ -893,6 +904,19 @@ export default async function StorefrontPage({
       {/* Footer */}
       <footer className="border-t border-[var(--brand-text)]/[.08] px-8 py-10 text-center text-sm text-[var(--brand-text-secondary)]">
         {homepage?.footerContent && <p>{homepage.footerContent}</p>}
+        {/* SHOWN ONLY WHEN THE OWNER PUBLISHED ONE (2026-09-24).
+            A customer bought twelve items, got no confirmation, and could
+            find nowhere to ask about it. There is deliberately no fallback:
+            with contactEmail null this renders nothing at all rather than
+            exposing the owner's sign-in address. */}
+        {store.contactEmail && (
+          <p className="mt-2">
+            Questions about an order?{" "}
+            <a className="underline" href={`mailto:${store.contactEmail}`} data-testid="store-contact">
+              {store.contactEmail}
+            </a>
+          </p>
+        )}
         <p className="mt-2">
           &copy; {new Date().getFullYear()} {store.name}
         </p>

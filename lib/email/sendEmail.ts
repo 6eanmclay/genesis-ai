@@ -25,6 +25,25 @@ export interface SendEmailInput {
   subject: string;
   html: string;
   /**
+   * WHERE A REPLY GOES (2026-09-24).
+   *
+   * Every email this platform sends comes FROM a Genesis-controlled address,
+   * which is what keeps one verified sending domain workable. The cost of
+   * that was invisible until a customer reported it: she received nothing and
+   * could find no way to reach the shop, and a reply to a confirmation would
+   * have reached us rather than the business she bought from.
+   *
+   * So the From stays ours and the reply goes to the merchant — but ONLY when
+   * the owner has explicitly published an address (Store.contactEmail).
+   * Omitted, no Reply-To header is sent at all; it is never filled in from
+   * the owner's login address, which they did not agree to publish.
+   *
+   * Validated by lib/store/contactEmail.ts before it is ever stored, for the
+   * same reason the display name is sanitised: this lands in a header, and a
+   * newline in it would append headers of its own.
+   */
+  replyTo?: string;
+  /**
    * WHOSE NAME THE CUSTOMER SEES (2026-08-29).
    *
    * Sean: the sender should read "[Store Name] <orders@…>". One
@@ -150,12 +169,24 @@ export async function sendEmail(input: SendEmailInput): Promise<void> {
   const displayName = input.fromName ? displayNameFor(input.fromName) : null;
   const from = displayName ? `${displayName} <${fromAddress}>` : fromAddress;
 
+  // BELT AND BRACES ON A HEADER VALUE. Everything reaching this should have
+  // passed normalizeContactEmail on the way into the database, but this is the
+  // last point before a string becomes a mail header, and a header is not the
+  // place to trust that an earlier layer did its job. Anything suspicious is
+  // DROPPED rather than repaired: a confirmation with no Reply-To is a small
+  // loss, and one with an injected Bcc is not.
+  const replyTo =
+    input.replyTo && !/[\s,;<>]/.test(input.replyTo) && !/[\u0000-\u001F\u007F]/.test(input.replyTo)
+      ? input.replyTo
+      : undefined;
+
   const resend = new Resend(apiKey);
   const result = await resend.emails.send({
     from,
     to: input.to,
     subject: input.subject,
     html: input.html,
+    ...(replyTo ? { replyTo } : {}),
   });
 
   if (result.error) {

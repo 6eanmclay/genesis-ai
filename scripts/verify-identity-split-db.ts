@@ -103,7 +103,10 @@ async function main(): Promise<void> {
     // screen produces. execute() is the wrapper that resolves and authorises;
     // it is what needs the session, and it is deliberately not used here.
     await editStoreExecutable.run(
-      { name: "Cubit & Coil Renamed", tagline: "t", description: "d" },
+      // contactEmail is required by StoreEditInput so no caller can leave it
+      // undecided. This test is about tenant scoping, not contact details, so
+      // it states "none" explicitly rather than relying on a default.
+      { name: "Cubit & Coil Renamed", tagline: "t", description: "d", contactEmail: null },
       { storeId: target.id, userId: user.id } as never);
 
     const [renamed, untouched] = await Promise.all([

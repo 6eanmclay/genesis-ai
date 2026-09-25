@@ -22,7 +22,7 @@ export function EditStoreForm({
    * business rather than to whichever one the account was last active in.
    */
   slug?: string;
-  store: { name: string; tagline: string | null; description: string | null };
+  store: { name: string; tagline: string | null; description: string | null; contactEmail: string | null };
 }) {
   const { state, formAction, resetKey } = useActionFormState(editStore.bind(null, slug));
 
@@ -68,6 +68,32 @@ export function EditStoreForm({
           rows={8}
           className="resize-y rounded-lg border border-black/[.08] px-4 py-2 leading-relaxed dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
         />
+      </div>
+
+      {/* WHERE A CUSTOMER CAN REACH THIS BUSINESS.
+          Added here rather than in Settings because this page is already
+          "Business Identity" - the name, tagline and description a customer
+          sees - and a public contact address is the same kind of fact. It is
+          deliberately NOT prefilled from the account's login address: an
+          empty box means the owner has not published one, and the storefront
+          shows no contact at all rather than an address they never chose. */}
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          Customer contact email
+        </label>
+        <input
+          name="contactEmail"
+          type="email"
+          inputMode="email"
+          autoComplete="off"
+          defaultValue={store.contactEmail ?? ""}
+          placeholder="Optional - shown to customers"
+          className="rounded-lg border border-black/[.08] px-3 py-2 text-sm dark:border-white/[.145] dark:bg-zinc-900 dark:text-zinc-50"
+        />
+        <p className="text-xs text-zinc-500">
+          Shown on your storefront and used for replies to order confirmations. Leave blank to show
+          none. This is never your sign-in address unless you type it here.
+        </p>
       </div>
       <SubmitButton pendingText="Saving..." className={`mt-2 self-start px-5 py-2 ${ACCENT_BUTTON}`}>
         Save

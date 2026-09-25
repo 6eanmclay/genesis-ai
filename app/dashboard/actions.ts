@@ -1,5 +1,6 @@
 "use server";
 
+import { normalizeContactEmail, contactEmailProblemMessage } from "@/lib/store/contactEmail";
 import { refineStorefrontExecutable } from "@/lib/execution/executables/refineStorefront";
 import { ReferenceReadingSchema } from "@/lib/design/analyzeReference";
 import { approveSelection, reportFor, type ExecutionReport } from "@/lib/design/referenceExecution";
@@ -241,7 +242,28 @@ export async function editStore(
       throw new RecoverableError("Store name is required");
     }
 
-    await execute(editStoreExecutable, { name, tagline: tagline || null, description: description || null }, { storeId: businessId });
+    // THE PUBLIC CONTACT ADDRESS, VALIDATED BEFORE IT IS STORED.
+    //
+    // An empty box is not an error: clearing the field is how an owner
+    // withdraws a published address, and normalizeContactEmail returns
+    // { value: null, problem: null } for it. A value that cannot work is
+    // refused with a sentence the owner can act on rather than silently
+    // repaired, because a repaired address is one they never typed.
+    const contact = normalizeContactEmail(formData.get("contactEmail") as string | null);
+    if (contact.problem) {
+      throw new RecoverableError(contactEmailProblemMessage(contact.problem));
+    }
+
+    await execute(
+      editStoreExecutable,
+      {
+        name,
+        tagline: tagline || null,
+        description: description || null,
+        contactEmail: contact.value,
+      },
+      { storeId: businessId }
+    );
   } catch (error) {
     unstable_rethrow(error);
     return toActionState(error, formData);

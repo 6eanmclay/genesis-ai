@@ -355,6 +355,25 @@ model Store {
   createdFromDraftId           String?   @unique
   description                  String?
   tagline                      String?
+
+  /// THE ADDRESS A CUSTOMER MAY WRITE TO (2026-09-24).
+  ///
+  /// A customer bought twelve items, received nothing, and could find no way
+  /// to contact the shop. The storefront tells customers to make contact in
+  /// three places and named no address in any of them, because there was no
+  /// column to name.
+  ///
+  /// NOT User.email. That is the address the owner SIGNS IN with, and
+  /// publishing it is a disclosure they never agreed to. This is separate and
+  /// is never filled in from the account.
+  ///
+  /// NULL MEANS THE OWNER HAS NOT CHOSEN ONE, and is never treated as
+  /// anything else: the storefront shows no contact rather than a fallback,
+  /// and the confirmation email simply carries no Reply-To. The migration
+  /// that adds this column deliberately backfills nothing — a published
+  /// address must be a decision a person made, never one inferred for them.
+  contactEmail                 String?
+
   logoUrl                      String?
   theme                        Json?
   blueprint                    Json?

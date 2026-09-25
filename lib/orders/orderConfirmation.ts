@@ -96,6 +96,14 @@ export interface ConfirmationLine {
 
 export interface ConfirmationStore {
   name: string;
+  /**
+   * The address the owner has published for customers, or null.
+   *
+   * Optional on the type so every existing caller and fixture keeps working;
+   * undefined and null mean the same thing here — no Reply-To is sent. It is
+   * NEVER substituted with the owner's login address.
+   */
+  contactEmail?: string | null;
   // The store's own currency (2026-08-22). This email quotes the customer a
   // total they have just been charged; a hardcoded dollar sign made that
   // figure a claim about which money left their account.
@@ -144,7 +152,7 @@ export function buildConfirmationEmail(params: {
   store: ConfirmationStore;
   /** Injected so lateness is testable without waiting eight weeks. */
   now?: Date;
-}): { to: string; subject: string; html: string; fromName: string } {
+}): { to: string; subject: string; html: string; fromName: string; replyTo?: string } {
   const { order, store } = params;
   const now = params.now ?? new Date();
   const total = formatMoney(order.amountInCents, store.currency);
@@ -208,6 +216,16 @@ export function buildConfirmationEmail(params: {
     // The store's own name in front of the address, so the customer sees who
     // they bought from rather than a platform they have never heard of.
     fromName: store.name,
+    // AND A REPLY REACHES THE SHOP, WHEN THERE IS SOMEWHERE FOR IT TO GO.
+    // The From address stays Genesis's, because one verified sending domain
+    // is what makes this work at all. Without a Reply-To, a customer hitting
+    // reply on their receipt writes to us instead of the business — which is
+    // precisely the dead end the customer who reported this ran into.
+    //
+    // Spread rather than set to undefined, so an unconfigured store produces
+    // an object with no replyTo key at all rather than one carrying an empty
+    // promise.
+    ...(store.contactEmail ? { replyTo: store.contactEmail } : {}),
     html: [
       late
         ? `<p>Your order was received successfully, but our receipt notification was not sent when it should have been. We're sorry this receipt is reaching you late. Your order details are below for your records.</p>`
@@ -295,7 +313,9 @@ export async function sendOrderConfirmation(
   const order = await prisma.order.findFirst({
     where: { id: orderId, storeId },
     include: {
-      store: { select: { name: true, currency: true } },
+      // contactEmail comes along so the receipt can carry a Reply-To that
+      // reaches the shop. Selected explicitly, never derived from the owner.
+      store: { select: { name: true, currency: true, contactEmail: true } },
       // Ordered so the receipt reads the same way twice. Without an explicit
       // order the rows come back however Postgres feels, and a customer
       // comparing two copies of their own receipt would see them differ.

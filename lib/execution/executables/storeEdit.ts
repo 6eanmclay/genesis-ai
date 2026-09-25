@@ -9,6 +9,14 @@ interface StoreEditInput {
   name: string;
   tagline: string | null;
   description: string | null;
+  /**
+   * The public contact address, already normalised by the action.
+   *
+   * Null means the owner has chosen not to publish one, or has cleared the
+   * one they had. It is written as null rather than left alone, so clearing
+   * the box genuinely withdraws the address.
+   */
+  contactEmail: string | null;
 }
 
 interface StoreEditMetadata {
@@ -31,7 +39,12 @@ export const editStoreExecutable: Executable<StoreEditInput, StoreEditMetadata> 
     });
     await prisma.store.update({
       where: { id: ctx.storeId },
-      data: { name: input.name, tagline: input.tagline, description: input.description },
+      data: {
+        name: input.name,
+        tagline: input.tagline,
+        description: input.description,
+        contactEmail: input.contactEmail,
+      },
     });
     return {
       message: "Store info updated",
@@ -48,6 +61,7 @@ export const editStoreExecutable: Executable<StoreEditInput, StoreEditMetadata> 
       name: input.name,
       tagline: input.tagline,
       description: input.description,
+      contactEmail: input.contactEmail,
     });
   },
 };

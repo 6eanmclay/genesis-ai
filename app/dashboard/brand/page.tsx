@@ -221,7 +221,12 @@ export async function BrandScreen({
         // It is a latent wrong-tenant WRITE, which is not a class of bug to
         // leave sitting because it has not fired yet.
         slug={slug}
-        store={{ name: store.name, tagline: store.tagline, description: store.description }}
+        store={{
+          name: store.name,
+          tagline: store.tagline,
+          description: store.description,
+          contactEmail: store.contactEmail,
+        }}
       />
       {/* THE NAME AND THE ADDRESS ARE NOT THE SAME FACT. `editStoreExecutable`
           writes name, tagline and description and never touches `slug`, which
