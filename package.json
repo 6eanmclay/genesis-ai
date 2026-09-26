@@ -50,5 +50,13 @@
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "allowScripts": {
+    "prisma@7.8.0": true,
+    "sharp@0.34.5": true,
+    "unrs-resolver@1.12.2": true,
+    "@embedded-postgres/darwin-arm64@18.4.0-beta.17": true,
+    "@prisma/engines@7.8.0": true,
+    "@sentry/cli@2.58.6": true
   }
 }
