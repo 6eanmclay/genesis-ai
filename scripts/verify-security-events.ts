@@ -110,6 +110,11 @@ async function main() {
     // session they do not recognise is looking at the wrong browser name.
     check("Edge is not mislabelled as the Chrome it impersonates", describeDevice(EDGE), "Windows · Edge");
 
+    // The J4 phone app. Without its own label it would read as a bare "iPhone",
+    // indistinguishable from someone's browser in the sessions list.
+    check("the J4 app on an iPhone reads as one", describeDevice("J4/1.0.0 (iPhone; iOS 26.5)"), "iPhone · J4");
+    check("and on Android", describeDevice("J4/1.0.0 (Android; 15)"), "Android · J4");
+
     // Absent is its own answer, distinct from unrecognised.
     check("no user-agent is null, not a guess", describeDevice(null), null);
     check("an empty one too", describeDevice("   "), null);

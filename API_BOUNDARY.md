@@ -31,6 +31,8 @@ an unlimited number of buckets.
 | `blob/business-asset-upload` | signed in | **600/user/hour.** Same. |
 | `creation/blank` | anybody | **600/addr per 10 min.** Host allow-list already stopped it being a general fetcher; nothing stopped the volume. |
 | `diag-client-log` | signed in | **size · `logSafeText` · 300/user per 10 min.** Was writing caller-supplied text straight into production logs. |
+| `mobile/v1/auth/sign-in` | anybody | **size 4 KB · schema.** Added 2026-09-27 (`MOBILE_SIGN_IN_CONTRACT.md`). Rate is the website's sign-in throttle, shared — see below. |
+| `mobile/v1/me`, `mobile/v1/auth/sign-out` | a J4 phone key | **`authenticateMobile`** (`lib/auth/mobileSession.ts`): revoked, idle 90 days, or issued before a password change is refused. No body. |
 
 ## Deliberately not rate limited — and why
 
@@ -39,6 +41,7 @@ an unlimited number of buckets.
 | `webhooks/stripe`, `webhooks/paypal/[storeId]`, `webhooks/easypost`, `webhooks/stripe-platform`, `integrations/[provider]/webhook` | **A provider burst is legitimate traffic.** Refusing one drops an order, a refund or a chargeback. The signature is the control, and it is stronger than a limit: an unsigned request is rejected at zero cost and recorded. The suite asserts these stay unlimited, so nobody adds one later without thinking. |
 | `cron/sync`, `cron/tick`, `cron/status` | **Throttling our own scheduler is self-harm.** `CRON_SECRET` is the control and it fails closed when unset. |
 | `storage/cleanup`, `storage/ledger`, `storage/report` | Platform-admin only. The allowlist is the control; a limit on an operator diagnostic protects nothing and hides an incident. |
+| `mobile/v1/auth/sign-in` | **The same reason as the row below, and the same throttle.** It calls `verifyCredentialSignIn`, the function NextAuth's `authorize` calls, so a phone's failures count against the website's buckets and vice versa. A second limiter here would be a second allowance. |
 | `auth/[...nextauth]` | NextAuth's own handler. Sign-in throttling already lives inside the credentials provider (`lib/auth/attemptThrottle.ts`) where it can see success and failure — the thing a route-level limiter cannot. |
 | `checkout/paypal/return` | A redirect the customer's browser follows once, carrying a PayPal order token. The token is single-use and the capture is idempotent; a limit here would strand a real buyer mid-purchase. **Open item: its query parameters are still unvalidated.** |
 | `integrations/[provider]/callback`, `onboarding/fulfillment/callback` | OAuth returns, protected by state. **Open item: query parameters unvalidated.** |

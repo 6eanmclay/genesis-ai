@@ -247,7 +247,26 @@ async function main() {
     // Asserted structurally, because the alternative is a full browser sign-in
     // against an account whose TOTP code changes every 30 seconds — and what
     // would actually break here is the ORDER of the checks, which is readable.
-    const authSource = (await import("fs")).readFileSync("auth.ts", "utf8");
+    //
+    // The checks moved out of auth.ts on 2026-09-27 into
+    // lib/auth/credentialSignIn.ts, so the J4 phone app's sign-in route runs the
+    // same ones. The assertions below read that file — and the first one proves
+    // the website still passes through it, because a gate the website no longer
+    // calls would pass every structural check here and protect nothing.
+    const fs = await import("fs");
+    const websiteAuth = fs.readFileSync("auth.ts", "utf8");
+    assert(
+      "the website's sign-in still runs these checks",
+      /authorize: \(credentials, request\) => verifyCredentialSignIn\(credentials, request\?\.headers\)/.test(websiteAuth),
+      "authorize must delegate to the shared check, not bypass it"
+    );
+    const phoneSignIn = fs.readFileSync("app/api/mobile/v1/auth/sign-in/route.ts", "utf8");
+    assert(
+      "and so does the phone's",
+      /await verifyCredentialSignIn\(/.test(phoneSignIn),
+      "a second door that skips the factor would make it decorative"
+    );
+    const authSource = fs.readFileSync("lib/auth/credentialSignIn.ts", "utf8");
 
     // Matches the GUARD, not merely a mention. The first version tested for
     // `isTwoFactorEnabled(user.id)` anywhere in the file, which also matches

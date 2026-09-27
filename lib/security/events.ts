@@ -128,8 +128,13 @@ export function describeDevice(userAgent: string | null | undefined): string | n
   // Order matters: Edge and Opera both claim Chrome, and Chrome claims Safari.
   // Checked most-specific-first so a browser is not mislabelled as the one it
   // impersonates for compatibility.
+  //
+  // The J4 phone app announces itself as "J4/<version> (iPhone; …)" — see
+  // genesis-j4-app's api client — so an owner sees "iPhone · J4" in their
+  // sessions list rather than the anonymous networking library underneath.
   const browser =
-    /Edg\//i.test(ua) ? "Edge"
+    /^J4\//.test(ua) ? "J4"
+    : /Edg\//i.test(ua) ? "Edge"
     : /OPR\/|Opera/i.test(ua) ? "Opera"
     : /Firefox\//i.test(ua) ? "Firefox"
     : /Chrome\//i.test(ua) ? "Chrome"

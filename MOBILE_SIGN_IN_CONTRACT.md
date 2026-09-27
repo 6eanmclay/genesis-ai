@@ -1,7 +1,11 @@
 # Signing in to J4 on the phone (M1)
 
-**Status: Proposal — awaiting Sean's approval. Written 2026-09-27.** Nothing in
-this document is built yet. It is the design for roadmap milestone M1 in
+**Status: Approved by Sean, 2026-09-27 — D1–D4 as recommended. Server side
+built the same day** (`lib/auth/credentialSignIn.ts`, `lib/auth/mobileSession.ts`,
+`app/api/mobile/v1/*`, verified by `scripts/verify-mobile-auth.ts`, 60/60).
+Sean's note on D3: *"the initial mobile authentication implementation, not a
+permanent limitation"* — Sign in with Apple and mapping Google/Apple identities
+to existing accounts are a later milestone. It is the design for roadmap milestone M1 in
 `J4_APP_ROADMAP.md`: *"you can log into the exact same real account on both the
 web dashboard and the phone."*
 

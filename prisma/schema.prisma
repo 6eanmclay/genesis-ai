@@ -283,6 +283,12 @@ model UserSession {
   /// Set when the owner ends this session. Null means live.
   revokedAt         DateTime?
   createdAt         DateTime  @default(now())
+  /// "web" for a NextAuth session, "mobile" for the J4 phone app. See
+  /// MOBILE_SIGN_IN_CONTRACT.md D1.
+  kind              String    @default("web")
+  /// SHA-256 of the phone's key. The key itself is never stored. Null on every
+  /// web session, which is how the two kinds share one list and one revoke.
+  tokenHash         String?   @unique
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
