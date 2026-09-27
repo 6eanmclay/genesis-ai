@@ -108,8 +108,36 @@ async function main() {
     check("a wrong code does not enable it", refused, { enabled: false, reason: "incorrect_code" });
     check("and 2FA is still off", await isTwoFactorEnabled(owner.id), false);
 
-    const enabled = await enableTwoFactor({ userId: owner.id, token: generateSync({ secret: setup.secret }) });
-    assert("a real code enables it", enabled.enabled, JSON.stringify(enabled));
+    // A SETUP RESTARTED ELSEWHERE IS SAID SO (2026-09-27). The password
+    // confirmation is account-wide, so a second device or tab can start setup
+    // again and silently replace the key the first one is showing. Every code
+    // from the old key then read as "that code didn't work", and a real owner
+    // tried fresh codes for minutes before giving up.
+    const replaced = await beginTwoFactorSetup({ userId: owner.id, accountEmail: owner.email });
+    const failuresBefore = await prisma.securityEvent.count({
+      where: { userId: owner.id, kind: SECURITY_EVENTS.twoFactorChallengeFailed },
+    });
+    const stale = await enableTwoFactor({
+      userId: owner.id,
+      token: generateSync({ secret: setup.secret }),
+      setupKey: setup.secret,
+    });
+    check("a code from a replaced key is reported as a replaced setup", stale, { enabled: false, reason: "setup_replaced" });
+    check("and is not written to the history as a wrong code — no code was wrong",
+      await prisma.securityEvent.count({ where: { userId: owner.id, kind: SECURITY_EVENTS.twoFactorChallengeFailed } }),
+      failuresBefore);
+    const wrongWithKey = await enableTwoFactor({ userId: owner.id, token: "000000", setupKey: replaced.secret });
+    check("with the current key, a wrong code is still just a wrong code", wrongWithKey, { enabled: false, reason: "incorrect_code" });
+    check("and 2FA is still off", await isTwoFactorEnabled(owner.id), false);
+    // The rest of this suite enrols against `setup`; put that key back as the live one.
+    Object.assign(setup, await beginTwoFactorSetup({ userId: owner.id, accountEmail: owner.email }));
+
+    const enabled = await enableTwoFactor({
+      userId: owner.id,
+      token: generateSync({ secret: setup.secret }),
+      setupKey: setup.secret,
+    });
+    assert("a real code enables it, with the key the page showed", enabled.enabled, JSON.stringify(enabled));
     check("and it is now genuinely on", await isTwoFactorEnabled(owner.id), true);
 
     // RECOVERY CODES ARRIVE WITH ENROLMENT, not as a later step.

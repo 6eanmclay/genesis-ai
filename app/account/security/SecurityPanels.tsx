@@ -137,10 +137,19 @@ export function TwoFactorPanel({
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             Add this to your authenticator app, then enter the code it shows.
           </p>
+          {/* ONE TAP, NOT A PASTE (2026-09-27). The comment below promised a
+              link and only the text was ever rendered, so an owner on their
+              phone had to copy a 32-character key between apps by hand — and
+              a real owner could not get it to work. The otpauth:// URI opens
+              the phone's authenticator (Google Authenticator, Apple Passwords)
+              with the account already filled in. */}
+          <a href={setup.uri} className={`${BUTTON} self-start`}>
+            Add to authenticator app
+          </a>
           {/* The secret in text as well as a link. Not every phone can scan
               from the screen it is signed in on, and an owner setting this up
               on the same device has no second camera. */}
-          <p className={LABEL}>Setup key</p>
+          <p className={LABEL}>Or paste this setup key</p>
           <p className="break-all font-mono text-sm text-black dark:text-zinc-50">{setup.secret}</p>
           <form
             action={(fd) =>
@@ -149,6 +158,13 @@ export function TwoFactorPanel({
                 if (outcome.enabled) {
                   setCodes(outcome.recoveryCodes);
                   setSetup(null);
+                } else if (outcome.reason === "setup_replaced") {
+                  // Back to the start button: this key is dead, and leaving it
+                  // on screen invites more codes from it.
+                  setSetup(null);
+                  setError(
+                    "Setup was started again on another device or tab, so this key no longer works. Start again here, and remove the old Genesis entry from your authenticator app."
+                  );
                 } else {
                   setError(
                     outcome.reason === "incorrect_code"
@@ -164,7 +180,10 @@ export function TwoFactorPanel({
               <label htmlFor="token" className={LABEL}>
                 Code from your app
               </label>
-              <input id="token" name="token" inputMode="numeric" placeholder="123456" className={INPUT} required />
+              <input id="token" name="token" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" className={INPUT} required />
+              {/* Which key these codes come from, so the server can tell a
+                  setup restarted elsewhere from a wrong code. */}
+              <input type="hidden" name="setupKey" value={setup.secret} />
             </div>
             <button type="submit" className={BUTTON} disabled={pending}>
               {pending ? "Checking…" : "Verify and turn on"}

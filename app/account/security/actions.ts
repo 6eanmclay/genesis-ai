@@ -76,6 +76,9 @@ export async function enableAction(formData: FormData) {
   const outcome = await enableTwoFactor({
     userId,
     token: String(formData.get("token") ?? ""),
+    // The key this page showed, so a setup restarted elsewhere is reported as
+    // exactly that instead of as a wrong code.
+    setupKey: String(formData.get("setupKey") ?? "") || null,
     userAgent,
   });
   // SPENT ONLY ON SUCCESS. A wrong code should not cost the owner their

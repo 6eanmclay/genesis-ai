@@ -77,6 +77,13 @@ async function secretFor(userId: string): Promise<string | null> {
   }
 }
 
+/** Constant-time comparison of two seeds, so the check leaks nothing about the stored one. */
+function sameSecret(a: string, b: string): boolean {
+  const left = Buffer.from(a.trim());
+  const right = Buffer.from(b);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
 /** Is a code valid for this account's seed right now? */
 export function isCodeValid(token: string, secret: string): boolean {
   // Trimmed and stripped of the spaces authenticator apps display them with —
@@ -94,7 +101,14 @@ export function isCodeValid(token: string, secret: string): boolean {
 export type EnableOutcome =
   | { enabled: true; recoveryCodes: string[] }
   | { enabled: false; reason: "no_setup_in_progress" }
-  | { enabled: false; reason: "incorrect_code" };
+  | { enabled: false; reason: "incorrect_code" }
+  /**
+   * The key the owner was shown is no longer the stored one: setup was started
+   * again somewhere else — another tab, or another device riding the same
+   * account-wide password confirmation. Every code from the old key is wrong,
+   * and "that code didn't work" sent a real owner round in circles (2026-09-27).
+   */
+  | { enabled: false; reason: "setup_replaced" };
 
 /**
  * Finish enrolment by proving the owner can produce a code.
@@ -106,10 +120,21 @@ export type EnableOutcome =
 export async function enableTwoFactor(input: {
   userId: string;
   token: string;
+  /**
+   * The setup key the page displayed, when the caller has it. Compared before
+   * the code, so a replaced setup is reported as that rather than as a wrong
+   * code — and not written to the history as a failed challenge, because no
+   * code was ever wrong.
+   */
+  setupKey?: string | null;
   userAgent?: string | null;
 }): Promise<EnableOutcome> {
   const secret = await secretFor(input.userId);
   if (!secret) return { enabled: false, reason: "no_setup_in_progress" };
+
+  if (input.setupKey && !sameSecret(input.setupKey, secret)) {
+    return { enabled: false, reason: "setup_replaced" };
+  }
 
   if (!isCodeValid(input.token, secret)) {
     await recordSecurityEvent({
