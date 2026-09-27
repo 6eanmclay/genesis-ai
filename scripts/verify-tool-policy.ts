@@ -273,7 +273,7 @@ console.log("\n=== 7. Both turn implementations use the same decision ===\n");
 // will eventually have two answers — which is exactly how the two chat paths
 // drifted before.
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
-const route = read(join("app", "api", "chat", "route.ts"));
+const route = read(join("lib", "j4", "chatTurn.ts"));
 const action = read(join("app", "dashboard", "ai-actions.ts"));
 
 // THE EXACT STATEMENT, per path. A first attempt asserted only that

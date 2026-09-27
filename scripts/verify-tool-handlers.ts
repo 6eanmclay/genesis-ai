@@ -1290,7 +1290,7 @@ async function main() {
   //
   // Asserted against the real files rather than trusted, because the failure
   // mode is silent: a tool with no home does not error, it does the wrong thing.
-  const route = readFileSync(join(process.cwd(), "app", "api", "chat", "route.ts"), "utf8");
+  const route = readFileSync(join(process.cwd(), "lib", "j4", "chatTurn.ts"), "utf8");
   const serverAction = readFileSync(join(process.cwd(), "app", "dashboard", "ai-actions.ts"), "utf8");
   const catalog = buildStoreChatUnifiedTools().map((t) => t.name);
 
@@ -1795,7 +1795,7 @@ async function main() {
   // that every handler is idempotent, but it would tell the owner the
   // navigation happened a second time and charge points again where a handler
   // generates.
-  const routeSrc = readFileSync(join(process.cwd(), "app", "api", "chat", "route.ts"), "utf8");
+  const routeSrc = readFileSync(join(process.cwd(), "lib", "j4", "chatTurn.ts"), "utf8");
   assert("the route does not fall back on a partial turn",
     routeSrc.includes('if (run.kind !== "handled" && !unfinished) {'),
     "a partial turn that falls back is re-run, and the owner is told twice");

@@ -300,7 +300,7 @@ async function main() {
   // would answer the same question with different confidence depending on which
   // path happened to serve it.
   const read = (relative: string) => readFileSync(join(process.cwd(), relative), "utf8");
-  const streaming = read(join("app", "api", "chat", "route.ts"));
+  const streaming = read(join("lib", "j4", "chatTurn.ts"));
   const fallback = read(join("app", "dashboard", "ai-actions.ts"));
   const reason = read(join("lib", "intelligence", "cognitiveLayer.ts"));
   // WHERE THIS NOW LIVES (2026-08-23, Unified Intelligence UI4). Both chat

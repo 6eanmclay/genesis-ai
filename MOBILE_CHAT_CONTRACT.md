@@ -1,7 +1,10 @@
 # Talking to J4 on the phone (M2)
 
-**Status: Proposal — awaiting Sean's approval. Written 2026-09-27.** Nothing in
-this document is built yet. It is the design for roadmap milestone M2 in
+**Status: Approved by Sean, 2026-09-27 — D1–D5 as recommended. Server side
+built the same day** (`lib/j4/chatTurn.ts`, `lib/j4/phoneChat.ts`,
+`app/api/mobile/v1/chat`, `app/api/mobile/v1/messages`, verified by
+`scripts/verify-mobile-chat.ts`, 32/32, and every existing suite that reads the
+chat turn, repointed to its new home). It is the design for roadmap milestone M2 in
 `J4_APP_ROADMAP.md`: *"a message sent from the phone shows up in the same
 conversation history visible on desktop, and J4's real reply appears on the
 phone."* It builds on M1 (`MOBILE_SIGN_IN_CONTRACT.md`) for who is asking.

@@ -32,6 +32,8 @@ an unlimited number of buckets.
 | `creation/blank` | anybody | **600/addr per 10 min.** Host allow-list already stopped it being a general fetcher; nothing stopped the volume. |
 | `diag-client-log` | signed in | **size · `logSafeText` · 300/user per 10 min.** Was writing caller-supplied text straight into production logs. |
 | `mobile/v1/auth/sign-in` | anybody | **size 4 KB · schema.** Added 2026-09-27 (`MOBILE_SIGN_IN_CONTRACT.md`). Rate is the website's sign-in throttle, shared — see below. |
+| `mobile/v1/chat` | a J4 phone key | **`authenticateMobile` · size 64 KB · schema.** Added 2026-09-27 (`MOBILE_CHAT_CONTRACT.md`). Runs the website's own turn (`lib/j4/chatTurn.ts`), so the 8000-character cap and the **120/user/hour limit are the website's, shared** — one account, one allowance. |
+| `mobile/v1/messages` | a J4 phone key | **`authenticateMobile`.** The business's main thread, last 50, resolved server-side. No body. |
 | `mobile/v1/me`, `mobile/v1/auth/sign-out` | a J4 phone key | **`authenticateMobile`** (`lib/auth/mobileSession.ts`): revoked, idle 90 days, or issued before a password change is refused. No body. |
 
 ## Deliberately not rate limited — and why

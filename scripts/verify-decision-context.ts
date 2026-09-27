@@ -269,7 +269,7 @@ async function main() {
   // A fallback that decided with less context than the primary would answer the
   // same question differently depending on which one served it.
   const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
-  const route = read(join("app", "api", "chat", "route.ts"));
+  const route = read(join("lib", "j4", "chatTurn.ts"));
   const action = read(join("app", "dashboard", "ai-actions.ts"));
 
   for (const [name, source] of [["the streaming route", route], ["the Server Action", action]] as const) {

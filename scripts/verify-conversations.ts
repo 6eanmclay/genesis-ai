@@ -259,7 +259,13 @@ async function main() {
   // THE REQUEST PATH'S GUARD. A conversation id arrives in a POST body, so an
   // unchecked one would write a turn into another business's thread — the
   // defect class UI6's first half removed, arriving through a new door.
-  const routeSrc = readFileSync(join(process.cwd(), "app", "api", "chat", "route.ts"), "utf8");
+  // The turn moved into lib/j4/chatTurn.ts on 2026-09-27 (M2), shared by the
+  // website's /api/chat and the phone's /api/mobile/v1/chat — the guard lives
+  // there now, and both doors pass through it.
+  const routeSrc = readFileSync(join(process.cwd(), "lib", "j4", "chatTurn.ts"), "utf8");
+  assert("the website's chat route runs that shared turn",
+    readFileSync(join(process.cwd(), "app", "api", "chat", "route.ts"), "utf8").includes("return streamChatTurn("),
+    "a guard in code the route no longer calls protects nothing");
   assert("the route checks the conversation belongs to this business",
     routeSrc.includes("await conversationInBusiness(store.id, requestedConversationId)"),
     "an id from a request body is not evidence it belongs here");

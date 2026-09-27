@@ -403,7 +403,7 @@ async function main() {
   // whole. Asserted from source, because the failure is an added filter rather
   // than a wrong value, and no runtime assertion here would see it.
   for (const [name, relative] of [
-    ["the streaming route", ["app", "api", "chat", "route.ts"]],
+    ["the streaming route", ["lib", "j4", "chatTurn.ts"]],
     ["the Server Action", ["app", "dashboard", "ai-actions.ts"]],
   ] as const) {
     const source = readFileSync(join(process.cwd(), ...relative), "utf8");

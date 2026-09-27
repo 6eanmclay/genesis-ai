@@ -81,7 +81,15 @@ check("an average of real values is the average", averageLatency([100, 200, 300]
 // exits carries the value, and the OTHER rail does not claim this field.
 console.log("\n=== 4. it belongs to the rail production actually uses ===\n");
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-const route = strip(readFileSync("app/api/chat/route.ts", "utf8"));
+// The turn moved out of app/api/chat/route.ts into lib/j4/chatTurn.ts on
+// 2026-09-27 (M2), shared with the phone's /api/mobile/v1/chat. The route must
+// still hand every turn to it, or the instrument below would be measuring code
+// production no longer runs.
+const webRoute = strip(readFileSync("app/api/chat/route.ts", "utf8"));
+check("the website's chat route runs the shared turn", /return streamChatTurn\(/.test(webRoute));
+const phoneRoute = strip(readFileSync("app/api/mobile/v1/chat/route.ts", "utf8"));
+check("and so does the phone's", /await streamChatTurn\(/.test(phoneRoute));
+const route = strip(readFileSync("lib/j4/chatTurn.ts", "utf8"));
 const actions = strip(readFileSync("app/dashboard/ai-actions.ts", "utf8"));
 
 check("the streaming route uses the clock", /createFirstTokenClock\(/.test(route));
